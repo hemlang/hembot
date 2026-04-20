@@ -1,0 +1,262 @@
+// Hembot — an interactive Hemlock coding agent.
+// Talks to a local llama-server (OpenAI-compatible /v1/chat/completions).
+// Extracts Hemlock code from the model's responses, runs it in a sandbox,
+// and optionally feeds errors back for self-correction.
+
+import { post_json_timeout } from "@stdlib/http";
+import * as json from "@stdlib/json";
+import { read_file, write_file, exists } from "@stdlib/fs";
+import { run_capture } from "@stdlib/shell";
+import * as cli from "@stdlib/args";
+import { BOLD, DIM, CYAN, GREEN, YELLOW, RED, RESET } from "@stdlib/terminal";
+
+// ────────────────────────────────────────────────────────────────────────────
+// Config
+
+fn load_config(parsed) {
+    let default_url = "http://127.0.0.1:8199/v1/chat/completions";
+    let default_prompt = "system_prompt.txt";
+
+    return {
+        url: cli.get_option(parsed, "url") ?? default_url,
+        system_prompt_file: cli.get_option(parsed, "system") ?? default_prompt,
+        model: cli.get_option(parsed, "model") ?? "local",
+        temperature: 0.2,
+        max_tokens: 2048,
+        timeout_ms: 120000,
+        run_code: !cli.has_flag(parsed, "no-exec"),
+        auto_retry: cli.has_flag(parsed, "retry"),
+        max_retries: 3,
+    };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// LLM call
+
+fn chat(config, messages) {
+    let payload = {
+        model: config.model,
+        messages: messages,
+        temperature: config.temperature,
+        max_tokens: config.max_tokens,
+    };
+
+    let resp = post_json_timeout(config.url, payload, config.timeout_ms);
+    if (resp.status_code != 200) {
+        throw `LLM request failed: HTTP ${resp.status_code}\n${resp.body}`;
+    }
+
+    let data = json.parse(resp.body);
+    return data.choices[0].message.content;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Code extraction
+
+// Pull the first ```hemlock (or ```hml / ```) fenced block from a response.
+// Returns null if nothing extractable is found.
+fn extract_code(response) {
+    let fence_tags = ["```hemlock", "```hml", "```"];
+    for (tag in fence_tags) {
+        let start = response.find(tag);
+        if (start >= 0) {
+            let after = start + tag.length;
+            // Skip an optional newline immediately after the opening fence
+            if (after < response.length && response.char_at(after) == '\n') {
+                after = after + 1;
+            }
+            let rest = response.slice(after);
+            let end = rest.find("```");
+            if (end >= 0) {
+                return rest.slice(0, end).trim();
+            }
+        }
+    }
+    return null;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Sandbox execution
+
+fn run_hemlock(code) {
+    let tmpfile = "/tmp/hembot_snippet.hml";
+    write_file(tmpfile, code);
+    // timeout 10s to protect against infinite loops
+    let result = run_capture(`timeout 10 hemlock ${tmpfile} 2>&1`);
+    return {
+        exit_code: result.code,
+        output: result.stdout ?? "",
+    };
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// UI helpers
+
+fn banner() {
+    print(`${BOLD}${CYAN}╔══════════════════════════════════════╗${RESET}`);
+    print(`${BOLD}${CYAN}║  Hembot — Hemlock Coding Agent       ║${RESET}`);
+    print(`${BOLD}${CYAN}╚══════════════════════════════════════╝${RESET}`);
+    print(`${DIM}Type a question. Ctrl-D or 'exit' to quit.${RESET}`);
+    print(`${DIM}Slash commands: /reset, /save <file>, /load <file>, /help${RESET}`);
+    print("");
+}
+
+fn print_assistant(text) {
+    print(`${GREEN}Hembot:${RESET} ${text}`);
+}
+
+fn print_error(text) {
+    eprint(`${RED}Error:${RESET} ${text}`);
+}
+
+fn print_sandbox(result) {
+    let tag = result.exit_code == 0
+        ? `${GREEN}✓ ran cleanly${RESET}`
+        : `${RED}✗ exit ${result.exit_code}${RESET}`;
+    print(`${DIM}── sandbox: ${tag}${RESET}`);
+    print(result.output);
+    print(`${DIM}──${RESET}`);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Slash commands
+
+fn handle_slash(cmd, messages) {
+    let parts = cmd.trim().split(" ");
+    let op = parts[0];
+
+    if (op == "/reset") {
+        let first = messages[0];  // keep system prompt
+        messages.clear();
+        messages.push(first);
+        print(`${DIM}Conversation reset.${RESET}`);
+        return messages;
+    }
+
+    if (op == "/save" && parts.length >= 2) {
+        write_file(parts[1], json.stringify(messages));
+        print(`${DIM}Saved ${messages.length} messages to ${parts[1]}.${RESET}`);
+        return messages;
+    }
+
+    if (op == "/load" && parts.length >= 2) {
+        if (!exists(parts[1])) {
+            print_error(`No such file: ${parts[1]}`);
+            return messages;
+        }
+        let loaded = json.parse(read_file(parts[1]));
+        print(`${DIM}Loaded ${loaded.length} messages from ${parts[1]}.${RESET}`);
+        return loaded;
+    }
+
+    if (op == "/help") {
+        print(`  /reset         — clear conversation (keeps system prompt)`);
+        print(`  /save <file>   — save conversation as JSON`);
+        print(`  /load <file>   — load conversation from JSON`);
+        print(`  /help          — this message`);
+        return messages;
+    }
+
+    print_error(`Unknown command: ${op}`);
+    return messages;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Main loop
+
+fn main() {
+    let parsed = cli.parse(args);
+    let config = load_config(parsed);
+
+    if (!exists(config.system_prompt_file)) {
+        print_error(`System prompt file not found: ${config.system_prompt_file}`);
+        return;
+    }
+
+    let system_prompt = read_file(config.system_prompt_file);
+    let messages = [{ role: "system", content: system_prompt }];
+
+    banner();
+
+    loop {
+        write(`${BOLD}you>${RESET} `);
+        let input = read_line();
+        if (input == null) {
+            print("");  // clean newline on Ctrl-D
+            break;
+        }
+
+        let trimmed = input.trim();
+        if (trimmed == "" ) { continue; }
+        if (trimmed == "exit" || trimmed == "quit") { break; }
+        if (trimmed.starts_with("/")) {
+            messages = handle_slash(trimmed, messages);
+            continue;
+        }
+
+        messages.push({ role: "user", content: input });
+
+        let response = null;
+        try {
+            response = chat(config, messages);
+        } catch (e) {
+            print_error(`${e}`);
+            messages.pop();  // drop the orphan user turn
+            continue;
+        }
+
+        print_assistant(response);
+        messages.push({ role: "assistant", content: response });
+
+        // Optional: extract and run code
+        if (config.run_code) {
+            let code = extract_code(response);
+            if (code != null) {
+                let result = run_hemlock(code);
+                print_sandbox(result);
+
+                // Auto-retry on failure if enabled
+                if (config.auto_retry && result.exit_code != 0) {
+                    retry_loop(config, messages, result);
+                }
+            }
+        }
+    }
+
+    print(`${DIM}Goodbye.${RESET}`);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Auto-retry with error feedback
+
+fn retry_loop(config, messages, last_result) {
+    let attempt = 0;
+    while (attempt < config.max_retries && last_result.exit_code != 0) {
+        attempt = attempt + 1;
+        let feedback = `That code failed when I ran it. Exit code ${last_result.exit_code}.\n\nOutput:\n${last_result.output}\n\nPlease fix and try again.`;
+        messages.push({ role: "user", content: feedback });
+
+        print(`${DIM}── retry ${attempt}/${config.max_retries} ──${RESET}`);
+        let response = null;
+        try {
+            response = chat(config, messages);
+        } catch (e) {
+            print_error(`${e}`);
+            messages.pop();
+            return;
+        }
+
+        print_assistant(response);
+        messages.push({ role: "assistant", content: response });
+
+        let code = extract_code(response);
+        if (code == null) {
+            print(`${DIM}No code in retry response; giving up.${RESET}`);
+            return;
+        }
+        last_result = run_hemlock(code);
+        print_sandbox(last_result);
+    }
+}
+
+main();

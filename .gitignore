@@ -1,0 +1,8 @@
+*.gguf
+*.safetensors
+/tmp/
+.venv/
+__pycache__/
+*.pyc
+# Session saves aren't committed by default
+examples/*.json
