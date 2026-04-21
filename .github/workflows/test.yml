@@ -26,12 +26,15 @@ jobs:
           # Optional deps — continue if unavailable
           sudo apt-get install -y liblws-dev libusearch-dev || true
 
-      - name: Build Hemlock from source
+      - name: Build and install Hemlock from source
         run: |
           git clone --depth 1 https://github.com/hemlang/hemlock.git /tmp/hemlock
           cd /tmp/hemlock
           make -j"$(nproc)"
-          sudo install -m 755 hemlock /usr/local/bin/hemlock
+          # `make install` places the binary in /usr/local/bin and the stdlib
+          # in /usr/local/lib/hemlock/stdlib — the @stdlib alias resolver
+          # needs the latter or it won't find things like @stdlib/testing.
+          sudo make install
           hemlock --version
 
       - name: Run extract tests
