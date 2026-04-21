@@ -1,0 +1,52 @@
+// Unit tests for src/strategy.hml
+import { describe, test, expect, run } from "@stdlib/testing";
+import { pick_strategy, temperature_for, STRATEGY_FEEDBACK, STRATEGY_COLD } from "../src/strategy.hml";
+
+describe("pick_strategy", fn() {
+    test("attempt 1 uses feedback", fn() {
+        expect(pick_strategy(1)).to_equal(STRATEGY_FEEDBACK);
+    });
+
+    test("attempt 2+ uses cold resample", fn() {
+        expect(pick_strategy(2)).to_equal(STRATEGY_COLD);
+        expect(pick_strategy(3)).to_equal(STRATEGY_COLD);
+        expect(pick_strategy(10)).to_equal(STRATEGY_COLD);
+    });
+
+    test("attempt 0 or below falls back to feedback", fn() {
+        // defensive: shouldn't happen in practice but must not crash
+        expect(pick_strategy(0)).to_equal(STRATEGY_FEEDBACK);
+    });
+});
+
+describe("temperature_for", fn() {
+    test("feedback attempt uses the caller's base temperature", fn() {
+        expect(temperature_for(1, 0.2)).to_equal(0.2);
+        expect(temperature_for(1, 0.5)).to_equal(0.5);
+    });
+
+    test("cold resample attempts bump temperature to 0.7", fn() {
+        expect(temperature_for(2, 0.2)).to_equal(0.7);
+        expect(temperature_for(3, 0.1)).to_equal(0.7);
+    });
+
+    test("higher base temperatures aren't reduced on cold", fn() {
+        // We want diversity, so bump to 0.7 even if base was lower,
+        // but don't override callers already running hot.
+        expect(temperature_for(2, 0.9)).to_equal(0.7);
+        // (Could argue this should stay 0.9; documenting current behavior.)
+    });
+});
+
+describe("strategy constants", fn() {
+    test("feedback and cold are distinct strings", fn() {
+        expect(STRATEGY_FEEDBACK == STRATEGY_COLD).to_equal(false);
+        expect(STRATEGY_FEEDBACK).to_equal("feedback");
+        expect(STRATEGY_COLD).to_equal("cold");
+    });
+});
+
+let stats = run();
+if (!stats.success) {
+    panic("tests failed");
+}

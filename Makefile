@@ -6,7 +6,7 @@ SRC     := src/hembot.hml
 BIN     := $(NAME)
 PREFIX  ?= /usr/local
 
-TESTS   := tests/test_extract.hml tests/test_config.hml
+TESTS   := tests/test_extract.hml tests/test_config.hml tests/test_strategy.hml
 
 .PHONY: all build test clean install uninstall run
 
@@ -14,7 +14,7 @@ all: build
 
 build: $(BIN)
 
-$(BIN): $(SRC) src/extract.hml src/config.hml
+$(BIN): $(SRC) src/extract.hml src/config.hml src/strategy.hml
 	hemlockc $(SRC) -o $@
 
 test:

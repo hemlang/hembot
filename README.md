@@ -65,7 +65,7 @@ main();
 | `--model <name>` | `local` | Model name sent to the server |
 | `--system <path>` | `system_prompt.txt` | System prompt file |
 | `--no-exec` | off | Don't execute code blocks, just show them |
-| `--retry` | off | Auto-retry up to 3 times when extracted code fails |
+| `--retry` | off | Auto-retry up to 3 times when extracted code fails (hybrid strategy: feedback first, then cold resamples) |
 | `--no-stream` | off | Disable token streaming; wait for the full response before printing |
 
 ## Slash commands

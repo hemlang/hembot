@@ -1,0 +1,41 @@
+// Retry strategy for when sandbox-executed code fails.
+//
+// Hembench data on Apothecary-Q8_0 showed that pure retry-with-feedback
+// helps translation-style bugs (L5: +40 pts vs pass@1) but hurts structural
+// bugs (L1 syntax: -11, L4 systems: -14). Pure cold sampling dominated on
+// L4/L6 at pass@5. The hybrid encoded here picks whichever lever tends to
+// win at each attempt index:
+//
+//   1. Initial attempt — cold, low temperature (the user's original ask).
+//   2. First retry    — feedback: accumulate the failing code + error into
+//                       the conversation and ask the model to fix it.
+//                       Best shot at recovering "almost right" outputs.
+//   3+                — cold resample: reset to [system, user], bump temp
+//                       for diversity, try again from scratch. This is
+//                       where retry-with-feedback tends to hurt because
+//                       the model doubles down on its first misreading.
+
+// String constants for strategy names (Hemlock doesn't have enums for
+// strings, so we use plain strings and validate via these exports).
+export let STRATEGY_FEEDBACK = "feedback";
+export let STRATEGY_COLD = "cold";
+
+// attempt_num is 1-based: 1 is the FIRST retry (i.e. the 2nd total LLM
+// call), not the initial attempt. The initial attempt has no strategy;
+// it's just the user's prompt.
+export fn pick_strategy(attempt_num: i32): string {
+    if (attempt_num <= 1) {
+        return STRATEGY_FEEDBACK;
+    }
+    return STRATEGY_COLD;
+}
+
+// Temperature to use for a given retry attempt.
+export fn temperature_for(attempt_num: i32, base_temp): number {
+    if (pick_strategy(attempt_num) == STRATEGY_COLD) {
+        // Bump for diversity on cold resamples. Higher than base but not
+        // wild — we still want on-task responses.
+        return 0.7;
+    }
+    return base_temp;
+}

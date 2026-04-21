@@ -11,6 +11,7 @@ import { BOLD, DIM, CYAN, GREEN, RED, RESET } from "@stdlib/terminal";
 
 import { extract_code, build_retry_feedback, parse_sse_events, parse_openai_delta } from "./extract.hml";
 import { load_config, parse_cli } from "./config.hml";
+import { pick_strategy, temperature_for, STRATEGY_FEEDBACK, STRATEGY_COLD } from "./strategy.hml";
 
 // ────────────────────────────────────────────────────────────────────────────
 // LLM call — streaming version. Prints each token as it arrives and returns
@@ -18,11 +19,11 @@ import { load_config, parse_cli } from "./config.hml";
 // silently via `chat_blocking` when `config.stream` is false (handy for
 // tests and for servers that don't support SSE).
 
-fn chat_blocking(config, messages) {
+fn chat_blocking(config, messages, temperature) {
     let payload = {
         model: config.model,
         messages: messages,
-        temperature: config.temperature,
+        temperature: temperature,
         max_tokens: config.max_tokens,
     };
 
@@ -35,11 +36,11 @@ fn chat_blocking(config, messages) {
     return data.choices[0].message.content;
 }
 
-fn chat_streaming(config, messages, label) {
+fn chat_streaming(config, messages, label, temperature) {
     let payload = {
         model: config.model,
         messages: messages,
-        temperature: config.temperature,
+        temperature: temperature,
         max_tokens: config.max_tokens,
         stream: true,
     };
@@ -81,11 +82,11 @@ fn chat_streaming(config, messages, label) {
     return full;
 }
 
-fn chat(config, messages, label) {
+fn chat(config, messages, label, temperature) {
     if (config.stream) {
-        return chat_streaming(config, messages, label);
+        return chat_streaming(config, messages, label, temperature);
     }
-    let response = chat_blocking(config, messages);
+    let response = chat_blocking(config, messages, temperature);
     write(label + response + "\n");
     return response;
 }
@@ -189,26 +190,46 @@ fn handle_slash(cmd, messages) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// Auto-retry with error feedback
+// Auto-retry with a hybrid strategy (feedback first, then cold resample).
+// See src/strategy.hml for the rationale — benchmark-tuned on Apothecary.
 
-fn retry_loop(config, messages, last_result) {
+fn retry_loop(config, messages, last_result, original_user_prompt) {
+    let system_prompt = messages[0];  // preserved across cold resamples
     let attempt = 0;
     while (attempt < config.max_retries && last_result.exit_code != 0) {
         attempt = attempt + 1;
-        let feedback = build_retry_feedback(last_result);
-        messages.push({ role: "user", content: feedback });
+        let strategy = pick_strategy(attempt);
+        let temp = temperature_for(attempt, config.temperature);
 
-        print(`${DIM}── retry ${attempt}/${config.max_retries} ──${RESET}`);
+        let turn_messages = null;
+        if (strategy == STRATEGY_FEEDBACK) {
+            // Append feedback to the accumulated conversation so the model
+            // sees the previous code + the error.
+            let feedback = build_retry_feedback(last_result);
+            messages.push({ role: "user", content: feedback });
+            turn_messages = messages;
+        } else {
+            // Cold resample: fresh two-message conversation, bumped temp
+            // for diversity. Don't pollute `messages` with failed tries.
+            turn_messages = [system_prompt, { role: "user", content: original_user_prompt }];
+        }
+
+        print(`${DIM}── retry ${attempt}/${config.max_retries} (${strategy}, temp=${temp}) ──${RESET}`);
         let response = null;
         try {
-            response = chat(config, messages, assistant_label());
+            response = chat(config, turn_messages, assistant_label(), temp);
         } catch (e) {
             print_error(`${e}`);
-            messages.pop();
+            if (strategy == STRATEGY_FEEDBACK) { messages.pop(); }
             return;
         }
 
-        messages.push({ role: "assistant", content: response });
+        // Only append to the persistent conversation on a feedback turn —
+        // cold resamples are exploratory, we don't want the model to see
+        // them later as "things we've already tried".
+        if (strategy == STRATEGY_FEEDBACK) {
+            messages.push({ role: "assistant", content: response });
+        }
 
         let code = extract_code(response);
         if (code == null) {
@@ -217,6 +238,15 @@ fn retry_loop(config, messages, last_result) {
         }
         last_result = run_hemlock(code);
         print_sandbox(last_result);
+
+        // If a cold resample succeeded, replace the failed feedback trail
+        // in the persistent conversation with just the winning reply so
+        // future turns see a clean history.
+        if (strategy == STRATEGY_COLD && last_result.exit_code == 0) {
+            // Drop any feedback-turn bookkeeping left over from attempt 1.
+            while (messages.length > 2) { messages.pop(); }
+            messages.push({ role: "assistant", content: response });
+        }
     }
 }
 
@@ -257,7 +287,7 @@ fn main() {
 
         let response = null;
         try {
-            response = chat(config, messages, assistant_label());
+            response = chat(config, messages, assistant_label(), config.temperature);
         } catch (e) {
             print_error(`${e}`);
             messages.pop();
@@ -273,7 +303,7 @@ fn main() {
                 print_sandbox(result);
 
                 if (config.auto_retry && result.exit_code != 0) {
-                    retry_loop(config, messages, result);
+                    retry_loop(config, messages, result, input);
                 }
             }
         }
