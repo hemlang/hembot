@@ -1,0 +1,46 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            uuid-dev \
+            libsqlite3-dev \
+            libffi-dev \
+            libpcre2-dev \
+            zlib1g-dev
+          # Optional deps — continue if unavailable
+          sudo apt-get install -y liblws-dev libusearch-dev || true
+
+      - name: Build Hemlock from source
+        run: |
+          git clone --depth 1 https://github.com/hemlang/hemlock.git /tmp/hemlock
+          cd /tmp/hemlock
+          make -j"$(nproc)"
+          sudo install -m 755 hemlock /usr/local/bin/hemlock
+          hemlock --version
+
+      - name: Run extract tests
+        run: hemlock tests/test_extract.hml
+
+      - name: Run config tests
+        run: hemlock tests/test_config.hml
+
+      - name: Smoke test — agent parses and starts
+        run: |
+          # Pipe empty input so it exits on EOF; we just want to verify it parses.
+          printf '' | timeout 5 hemlock src/hembot.hml || [ $? -eq 124 ] || exit 1

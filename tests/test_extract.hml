@@ -1,0 +1,71 @@
+// Unit tests for src/extract.hml
+import { describe, test, expect, run } from "@stdlib/testing";
+import { extract_code, build_retry_feedback } from "../src/extract.hml";
+
+describe("extract_code", fn() {
+    test("pulls a hemlock-tagged fenced block", fn() {
+        let resp = "Sure!\n```hemlock\nprint(\"hi\");\n```\nHope that helps.";
+        expect(extract_code(resp)).to_equal("print(\"hi\");");
+    });
+
+    test("pulls an hml-tagged fenced block", fn() {
+        let resp = "```hml\nlet x = 1;\nprint(x);\n```";
+        expect(extract_code(resp)).to_equal("let x = 1;\nprint(x);");
+    });
+
+    test("pulls an unlabeled fenced block", fn() {
+        let resp = "here you go:\n```\nprint(42);\n```";
+        expect(extract_code(resp)).to_equal("print(42);");
+    });
+
+    test("prefers hemlock over plain fence when both appear", fn() {
+        let resp = "```hemlock\nlet a = 1;\n```\n```\nnot this one\n```";
+        expect(extract_code(resp)).to_equal("let a = 1;");
+    });
+
+    test("returns null when there is no fenced block", fn() {
+        let resp = "No code here, just chatter.";
+        expect(extract_code(resp)).to_equal(null);
+    });
+
+    test("returns null when fence is not closed", fn() {
+        let resp = "```hemlock\nlet x = 1;\n";
+        expect(extract_code(resp)).to_equal(null);
+    });
+
+    test("handles leading and trailing whitespace inside block", fn() {
+        let resp = "```hemlock\n\n   print(\"x\");\n\n```";
+        expect(extract_code(resp)).to_equal("print(\"x\");");
+    });
+
+    test("handles code with multiple ``` substrings (closes at first)", fn() {
+        let resp = "```hemlock\nlet s = \"```\";\nprint(s);\n```";
+        // Closes at first ``` after opening fence — inner backticks are tricky.
+        // We document the current behavior: it closes at the first ```.
+        let got = extract_code(resp);
+        expect(got.starts_with("let s =")).to_equal(true);
+    });
+});
+
+describe("build_retry_feedback", fn() {
+    test("includes the exit code and output", fn() {
+        let msg = build_retry_feedback({ exit_code: 1, output: "parse error at line 2" });
+        expect(msg.contains("Exit code 1")).to_equal(true);
+        expect(msg.contains("parse error at line 2")).to_equal(true);
+    });
+
+    test("handles empty output", fn() {
+        let msg = build_retry_feedback({ exit_code: 139, output: "" });
+        expect(msg.contains("Exit code 139")).to_equal(true);
+    });
+
+    test("handles null output gracefully", fn() {
+        let msg = build_retry_feedback({ exit_code: 2, output: null });
+        expect(msg.contains("Exit code 2")).to_equal(true);
+    });
+});
+
+let stats = run();
+if (!stats.success) {
+    panic("tests failed");
+}

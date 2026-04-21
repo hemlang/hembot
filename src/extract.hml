@@ -1,0 +1,32 @@
+// Pure helpers for extracting and repairing code from an LLM response.
+// Kept as a separate module so they can be unit-tested without spinning up
+// a chat server.
+
+// Pull the first ```hemlock / ```hml / ``` fenced block from `response`.
+// Returns the trimmed code, or null if no fenced block is found.
+export fn extract_code(response) {
+    let fence_tags = ["```hemlock", "```hml", "```"];
+    for (tag in fence_tags) {
+        let start = response.find(tag);
+        if (start >= 0) {
+            let after = start + tag.length;
+            // Skip an optional newline immediately after the opening fence
+            if (after < response.length && response.char_at(after) == '\n') {
+                after = after + 1;
+            }
+            let rest = response.slice(after);
+            let end = rest.find("```");
+            if (end >= 0) {
+                return rest.slice(0, end).trim();
+            }
+        }
+    }
+    return null;
+}
+
+// Build a short feedback message the agent can send back to the model
+// after running extracted code. `result` should have `exit_code` and `output`.
+export fn build_retry_feedback(result) {
+    let output = result.output ?? "";
+    return `That code failed when I ran it. Exit code ${result.exit_code}.\n\nOutput:\n${output}\n\nPlease fix and try again.`;
+}

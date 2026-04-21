@@ -1,0 +1,14 @@
+{
+  "name": "hemlang/hembot",
+  "version": "0.1.0",
+  "description": "An interactive Hemlock coding agent that talks to a local llama-server, extracts Hemlock code from responses, and runs it sandboxed.",
+  "author": "nbeerbower",
+  "license": "MIT",
+  "main": "src/hembot.hml",
+  "scripts": {
+    "start": "hemlock src/hembot.hml",
+    "test": "hemlock tests/test_extract.hml && hemlock tests/test_config.hml"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

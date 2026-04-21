@@ -1,0 +1,34 @@
+// Configuration parsing for Hembot.
+// Reads from CLI arguments (parsed via @stdlib/args) and applies defaults.
+
+import * as cli from "@stdlib/args";
+
+export let DEFAULT_URL = "http://127.0.0.1:8199/v1/chat/completions";
+export let DEFAULT_SYSTEM_PROMPT = "system_prompt.txt";
+export let DEFAULT_MODEL = "local";
+export let DEFAULT_TEMPERATURE = 0.2;
+export let DEFAULT_MAX_TOKENS = 2048;
+export let DEFAULT_TIMEOUT_MS = 120000;
+export let DEFAULT_MAX_RETRIES = 3;
+
+// String options that take a value: `--url http://...` instead of
+// being parsed as a flag plus a positional argument.
+export let CLI_STRING_OPTIONS = ["url", "model", "system"];
+
+export fn parse_cli(argv) {
+    return cli.parse(argv, { strings: CLI_STRING_OPTIONS });
+}
+
+export fn load_config(parsed) {
+    return {
+        url: cli.get_option(parsed, "url") ?? DEFAULT_URL,
+        system_prompt_file: cli.get_option(parsed, "system") ?? DEFAULT_SYSTEM_PROMPT,
+        model: cli.get_option(parsed, "model") ?? DEFAULT_MODEL,
+        temperature: DEFAULT_TEMPERATURE,
+        max_tokens: DEFAULT_MAX_TOKENS,
+        timeout_ms: DEFAULT_TIMEOUT_MS,
+        run_code: !cli.has_flag(parsed, "no-exec"),
+        auto_retry: cli.has_flag(parsed, "retry"),
+        max_retries: DEFAULT_MAX_RETRIES,
+    };
+}

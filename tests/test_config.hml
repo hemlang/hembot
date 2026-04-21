@@ -1,0 +1,62 @@
+// Unit tests for src/config.hml
+import { describe, test, expect, run } from "@stdlib/testing";
+import { load_config, parse_cli, DEFAULT_URL, DEFAULT_MODEL, DEFAULT_SYSTEM_PROMPT } from "../src/config.hml";
+
+fn parse_fake_args(argv) {
+    // argv[0] is the script name (like Hemlock's real `args`)
+    let mock = ["hembot.hml"];
+    for (a in argv) {
+        mock.push(a);
+    }
+    return parse_cli(mock);
+}
+
+describe("load_config defaults", fn() {
+    test("applies defaults when no flags are set", fn() {
+        let cfg = load_config(parse_fake_args([]));
+        expect(cfg.url).to_equal(DEFAULT_URL);
+        expect(cfg.model).to_equal(DEFAULT_MODEL);
+        expect(cfg.system_prompt_file).to_equal(DEFAULT_SYSTEM_PROMPT);
+        expect(cfg.run_code).to_equal(true);
+        expect(cfg.auto_retry).to_equal(false);
+    });
+
+    test("temperature and timeout have sensible defaults", fn() {
+        let cfg = load_config(parse_fake_args([]));
+        expect(cfg.temperature).to_equal(0.2);
+        expect(cfg.max_tokens).to_equal(2048);
+        expect(cfg.timeout_ms).to_equal(120000);
+    });
+});
+
+describe("load_config overrides", fn() {
+    test("--url overrides the default URL", fn() {
+        let cfg = load_config(parse_fake_args(["--url", "http://example.com/v1/chat"]));
+        expect(cfg.url).to_equal("http://example.com/v1/chat");
+    });
+
+    test("--model overrides the default model name", fn() {
+        let cfg = load_config(parse_fake_args(["--model", "hembot-7b"]));
+        expect(cfg.model).to_equal("hembot-7b");
+    });
+
+    test("--system overrides the system prompt file", fn() {
+        let cfg = load_config(parse_fake_args(["--system", "my_prompt.txt"]));
+        expect(cfg.system_prompt_file).to_equal("my_prompt.txt");
+    });
+
+    test("--no-exec disables code execution", fn() {
+        let cfg = load_config(parse_fake_args(["--no-exec"]));
+        expect(cfg.run_code).to_equal(false);
+    });
+
+    test("--retry enables auto-retry", fn() {
+        let cfg = load_config(parse_fake_args(["--retry"]));
+        expect(cfg.auto_retry).to_equal(true);
+    });
+});
+
+let stats = run();
+if (!stats.success) {
+    panic("tests failed");
+}
