@@ -15,9 +15,14 @@ Hembot talks to a local `llama-server` running a Hemlock-tuned model (default: [
    ```bash
    llama-server -m Hemlock-Apothecary-7B-Q8_0.gguf --port 8199 --ctx-size 8192 -ngl -1
    ```
-5. Run Hembot:
+5. Run Hembot (interpreted):
    ```bash
    hemlock src/hembot.hml
+   ```
+   Or build a self-contained binary and run that:
+   ```bash
+   make build
+   ./hembot
    ```
 
 ## Usage
@@ -89,18 +94,22 @@ At the `you>` prompt:
 └── README.md
 ```
 
-## Testing
+## Building and testing
 
 ```bash
-# Run unit tests (no LLM needed)
-hemlock tests/test_extract.hml
-hemlock tests/test_config.hml
+make build       # compile hembot binary via hemlockc
+make test        # run unit tests under the interpreter (no LLM needed)
+make run         # run the agent interpreted
+make install     # install to /usr/local/bin (honours PREFIX + DESTDIR)
+make clean       # remove build artifacts
 
-# Or via hpm (if you have a working hpm build)
+# Also wired up as hpm scripts, but note there's an upstream hpm bug
+# that throws at exit — the command still runs:
+hpm run build
 hpm test
 ```
 
-CI builds Hemlock from source on each push/PR and runs the full test suite.
+CI builds Hemlock from source on each push/PR and runs the full test suite. Tagged pushes (`v*`) trigger a release workflow that compiles hembot with `hemlockc` and attaches a Linux x86_64 tarball to the GitHub release.
 
 ## Why was this system prompt chosen?
 

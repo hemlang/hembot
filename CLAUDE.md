@@ -44,17 +44,33 @@ Pure helpers live in their own modules so tests don't need `llama-server` or std
 - `@stdlib/terminal` — ANSI color constants.
 - `@stdlib/testing` — `describe`, `test`, `expect`, `run`.
 
-## Testing
+## Building
 
 ```bash
-# Run each suite directly
-hemlock tests/test_extract.hml
-hemlock tests/test_config.hml
+make build    # hemlockc src/hembot.hml -o hembot  →  1.5MB ELF
+make test     # both test suites under the interpreter
+make run      # interpret and run
+make install  # install binary + prompt to $PREFIX (default /usr/local)
+make clean
 ```
 
-CI (GitHub Actions) builds Hemlock from source and runs both suites on every push/PR.
+`hpm run <script>` and `hpm test` work too but currently throw an
+`exit() argument must be an integer, got object` exception after
+running — an upstream hpm bug. The command itself completes normally;
+the exit just kills the parent harness noisily. Prefer `make` for now.
 
-Don't use `hpm test` for now — there's an upstream bug where it crashes passing the test stats object to `exit()`. Invoke tests directly instead.
+Compiled binary parity: tested — all 18 tests pass under `hemlockc`,
+and the compiled agent behaves identically to the interpreted one.
+
+## CI
+
+- `.github/workflows/test.yml` — runs on every push/PR. Builds Hemlock
+  from source (`make install`), runs both test suites, smoke-tests the
+  agent under the interpreter.
+- `.github/workflows/release.yml` — runs on `v*` tag pushes or via
+  `workflow_dispatch`. Compiles hembot with `hemlockc`, packages a
+  tarball (binary + `system_prompt.txt` + `README`), and attaches it
+  to a new GitHub release with a `sha256` companion file.
 
 ## Running the agent
 

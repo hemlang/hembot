@@ -1,0 +1,95 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  # Allow manual triggering for testing the workflow without a tag push.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag name for the dry-run release (e.g. v0.0.1-test)'
+        required: true
+        default: v0.0.1-test
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            libcurl4-openssl-dev \
+            libssl-dev \
+            uuid-dev \
+            libsqlite3-dev \
+            libffi-dev \
+            libpcre2-dev \
+            zlib1g-dev
+          sudo apt-get install -y liblws-dev libusearch-dev || true
+
+      - name: Build and install Hemlock from source
+        run: |
+          git clone --depth 1 https://github.com/hemlang/hemlock.git /tmp/hemlock
+          cd /tmp/hemlock
+          make -j"$(nproc)"
+          sudo make install
+          hemlock --version
+          hemlockc --version
+
+      - name: Run test suite
+        run: make test
+
+      - name: Compile hembot binary
+        run: make build
+
+      - name: Smoke test compiled binary
+        run: |
+          # Pipe empty input; binary should print banner and exit on EOF.
+          printf '' | timeout 5 ./hembot || [ $? -eq 124 ] || exit 1
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package release tarball
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          STAGE="hembot-${TAG}-linux-x86_64"
+          mkdir -p "$STAGE"
+          cp hembot "$STAGE/"
+          cp system_prompt.txt "$STAGE/"
+          cp README.md LICENSE* "$STAGE/" 2>/dev/null || true
+          tar -czf "${STAGE}.tar.gz" "$STAGE"
+          sha256sum "${STAGE}.tar.gz" > "${STAGE}.tar.gz.sha256"
+          ls -lh "${STAGE}.tar.gz" "${STAGE}.tar.gz.sha256"
+
+      - name: Create GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          gh release create "$TAG" \
+            --title "Hembot $TAG" \
+            --notes "Pre-built hembot binary for Linux x86_64, compiled with hemlockc against Hemlock 2.0+. See README for runtime requirements." \
+            hembot-${TAG}-linux-x86_64.tar.gz \
+            hembot-${TAG}-linux-x86_64.tar.gz.sha256
+
+      - name: Upload workflow artifact (dry-run)
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hembot-${{ steps.tag.outputs.tag }}-linux-x86_64
+          path: hembot-${{ steps.tag.outputs.tag }}-linux-x86_64.tar.gz*
