@@ -6,7 +6,7 @@
 import { post_json_timeout, post_json_stream } from "@stdlib/http";
 import { parse as json_parse, stringify as json_stringify } from "@stdlib/json";
 import { read_file, write_file, exists } from "@stdlib/fs";
-import { run_capture } from "@stdlib/shell";
+import { run_capture_safe } from "@stdlib/shell";
 import { BOLD, DIM, CYAN, GREEN, RED, RESET } from "@stdlib/terminal";
 
 import { extract_code, build_retry_feedback, parse_sse_events, parse_openai_delta } from "./extract.hml";
@@ -96,11 +96,23 @@ fn chat(config, messages, label) {
 fn run_hemlock(code) {
     let tmpfile = "/tmp/hembot_snippet.hml";
     write_file(tmpfile, code);
-    // timeout 10s to protect against infinite loops
-    let result = run_capture(`timeout 10 hemlock ${tmpfile} 2>&1`);
+    // argv-style: no shell metacharacters, no warnings, no injection.
+    // `timeout` is just another executable that wraps its child, so it
+    // works fine inside argv form.
+    let result = run_capture_safe(["timeout", "10", "hemlock", tmpfile]);
+    let stdout = result.stdout ?? "";
+    let stderr = result.stderr ?? "";
+    // Merge streams so the user sees syntax/runtime errors too.
+    let output = stdout;
+    if (stderr.length > 0) {
+        if (output.length > 0 && !output.ends_with("\n")) {
+            output = output + "\n";
+        }
+        output = output + stderr;
+    }
     return {
         exit_code: result.code,
-        output: result.stdout ?? "",
+        output: output,
     };
 }
 
