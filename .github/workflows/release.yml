@@ -76,30 +76,36 @@ jobs:
           ls -lh "${STAGE}.tar.gz" "${STAGE}.tar.gz.sha256"
 
       - name: Publish release assets
-        if: github.event_name == 'push'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        id: publish
         run: |
           TAG="${{ steps.tag.outputs.tag }}"
           ASSETS=(
             "hembot-${TAG}-linux-x86_64.tar.gz"
             "hembot-${TAG}-linux-x86_64.tar.gz.sha256"
           )
-          # If the release already exists (e.g. created manually alongside
-          # the tag), just upload the assets; otherwise create one.
+          # On tag push: create the release if missing, otherwise upload to it.
+          # On manual dispatch: only upload if a matching release already
+          # exists — don't create a new one just because a dry-run ran.
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists — uploading assets."
+            echo "Release $TAG exists — uploading assets."
             gh release upload "$TAG" "${ASSETS[@]}" --clobber
-          else
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "push" ]; then
             echo "Creating release $TAG."
             gh release create "$TAG" \
               --title "Hembot $TAG" \
               --notes "Pre-built hembot binary for Linux x86_64, compiled with hemlockc against Hemlock 2.0+. See README for runtime requirements." \
               "${ASSETS[@]}"
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No release for $TAG and not a push — skipping publish."
+            echo "published=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Upload workflow artifact (dry-run)
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' && steps.publish.outputs.published != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: hembot-${{ steps.tag.outputs.tag }}-linux-x86_64
