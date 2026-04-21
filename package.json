@@ -1,6 +1,6 @@
 {
   "name": "hemlang/hembot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "An interactive Hemlock coding agent that talks to a local llama-server, extracts Hemlock code from responses, and runs it sandboxed.",
   "author": "nbeerbower",
   "license": "MIT",
