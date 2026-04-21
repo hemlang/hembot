@@ -3,19 +3,22 @@
 // extracts Hemlock code from responses, runs it in a sandbox,
 // and optionally feeds errors back for self-correction.
 
-import { post_json_timeout } from "@stdlib/http";
-import * as json from "@stdlib/json";
+import { post_json_timeout, post_json_stream } from "@stdlib/http";
+import { parse as json_parse, stringify as json_stringify } from "@stdlib/json";
 import { read_file, write_file, exists } from "@stdlib/fs";
 import { run_capture } from "@stdlib/shell";
 import { BOLD, DIM, CYAN, GREEN, RED, RESET } from "@stdlib/terminal";
 
-import { extract_code, build_retry_feedback } from "./extract.hml";
+import { extract_code, build_retry_feedback, parse_sse_events, parse_openai_delta } from "./extract.hml";
 import { load_config, parse_cli } from "./config.hml";
 
 // ────────────────────────────────────────────────────────────────────────────
-// LLM call
+// LLM call — streaming version. Prints each token as it arrives and returns
+// the full concatenated response at the end. Falls back to non-streaming
+// silently via `chat_blocking` when `config.stream` is false (handy for
+// tests and for servers that don't support SSE).
 
-fn chat(config, messages) {
+fn chat_blocking(config, messages) {
     let payload = {
         model: config.model,
         messages: messages,
@@ -28,8 +31,63 @@ fn chat(config, messages) {
         throw `LLM request failed: HTTP ${resp.status_code}\n${resp.body}`;
     }
 
-    let data = json.parse(resp.body);
+    let data = json_parse(resp.body);
     return data.choices[0].message.content;
+}
+
+fn chat_streaming(config, messages, label) {
+    let payload = {
+        model: config.model,
+        messages: messages,
+        temperature: config.temperature,
+        max_tokens: config.max_tokens,
+        stream: true,
+    };
+
+    let s = post_json_stream(config.url, payload, config.timeout_ms);
+    if (s.status_code != 200) {
+        s.close();
+        throw `LLM request failed: HTTP ${s.status_code}`;
+    }
+
+    // Print the label exactly once, at the start.
+    write(label);
+
+    let full = "";
+    let buffer = "";
+    let finished = false;
+
+    while (!s.done && !finished) {
+        let chunk = s.read(config.timeout_ms);
+        if (chunk == null) { break; }
+        buffer = buffer + chunk;
+
+        let parsed = parse_sse_events(buffer);
+        buffer = parsed.remainder;
+
+        for (payload_str in parsed.events) {
+            let delta = parse_openai_delta(payload_str, json_parse);
+            if (delta.length > 0) {
+                write(delta);
+                full = full + delta;
+            }
+        }
+
+        if (parsed.done) { finished = true; }
+    }
+
+    s.close();
+    write("\n");  // terminate the streamed line so the next prompt is on its own row
+    return full;
+}
+
+fn chat(config, messages, label) {
+    if (config.stream) {
+        return chat_streaming(config, messages, label);
+    }
+    let response = chat_blocking(config, messages);
+    write(label + response + "\n");
+    return response;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -58,8 +116,8 @@ fn banner() {
     print("");
 }
 
-fn print_assistant(text) {
-    print(`${GREEN}Hembot:${RESET} ${text}`);
+fn assistant_label(): string {
+    return `${GREEN}Hembot:${RESET} `;
 }
 
 fn print_error(text) {
@@ -91,7 +149,7 @@ fn handle_slash(cmd, messages) {
     }
 
     if (op == "/save" && parts.length >= 2) {
-        write_file(parts[1], json.stringify(messages));
+        write_file(parts[1], json_stringify(messages));
         print(`${DIM}Saved ${messages.length} messages to ${parts[1]}.${RESET}`);
         return messages;
     }
@@ -101,7 +159,7 @@ fn handle_slash(cmd, messages) {
             print_error(`No such file: ${parts[1]}`);
             return messages;
         }
-        let loaded = json.parse(read_file(parts[1]));
+        let loaded = json_parse(read_file(parts[1]));
         print(`${DIM}Loaded ${loaded.length} messages from ${parts[1]}.${RESET}`);
         return loaded;
     }
@@ -131,14 +189,13 @@ fn retry_loop(config, messages, last_result) {
         print(`${DIM}── retry ${attempt}/${config.max_retries} ──${RESET}`);
         let response = null;
         try {
-            response = chat(config, messages);
+            response = chat(config, messages, assistant_label());
         } catch (e) {
             print_error(`${e}`);
             messages.pop();
             return;
         }
 
-        print_assistant(response);
         messages.push({ role: "assistant", content: response });
 
         let code = extract_code(response);
@@ -188,14 +245,13 @@ fn main() {
 
         let response = null;
         try {
-            response = chat(config, messages);
+            response = chat(config, messages, assistant_label());
         } catch (e) {
             print_error(`${e}`);
             messages.pop();
             continue;
         }
 
-        print_assistant(response);
         messages.push({ role: "assistant", content: response });
 
         if (config.run_code) {

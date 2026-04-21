@@ -30,5 +30,8 @@ export fn load_config(parsed) {
         run_code: !cli.has_flag(parsed, "no-exec"),
         auto_retry: cli.has_flag(parsed, "retry"),
         max_retries: DEFAULT_MAX_RETRIES,
+        // Streaming is on by default; `--no-stream` falls back to a single
+        // blocking POST that returns the whole response at once.
+        stream: !cli.has_flag(parsed, "no-stream"),
     };
 }

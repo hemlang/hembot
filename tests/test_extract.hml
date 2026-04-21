@@ -1,6 +1,7 @@
 // Unit tests for src/extract.hml
 import { describe, test, expect, run } from "@stdlib/testing";
-import { extract_code, build_retry_feedback } from "../src/extract.hml";
+import { extract_code, build_retry_feedback, parse_sse_events, parse_openai_delta } from "../src/extract.hml";
+import { parse as json_parse } from "@stdlib/json";
 
 describe("extract_code", fn() {
     test("pulls a hemlock-tagged fenced block", fn() {
@@ -44,6 +45,86 @@ describe("extract_code", fn() {
         // We document the current behavior: it closes at the first ```.
         let got = extract_code(resp);
         expect(got.starts_with("let s =")).to_equal(true);
+    });
+});
+
+describe("parse_sse_events", fn() {
+    test("extracts a single complete event", fn() {
+        let buf = "data: hello\n\n";
+        let p = parse_sse_events(buf);
+        expect(p.events.length).to_equal(1);
+        expect(p.events[0]).to_equal("hello");
+        expect(p.done).to_equal(false);
+        expect(p.remainder).to_equal("");
+    });
+
+    test("extracts multiple events in one buffer", fn() {
+        let buf = "data: one\n\ndata: two\n\ndata: three\n\n";
+        let p = parse_sse_events(buf);
+        expect(p.events.length).to_equal(3);
+        expect(p.events[0]).to_equal("one");
+        expect(p.events[2]).to_equal("three");
+    });
+
+    test("leaves partial event in remainder", fn() {
+        let buf = "data: complete\n\ndata: incompl";
+        let p = parse_sse_events(buf);
+        expect(p.events.length).to_equal(1);
+        expect(p.remainder).to_equal("data: incompl");
+    });
+
+    test("handles DONE terminator", fn() {
+        let buf = "data: last-token\n\ndata: [DONE]\n\ndata: never\n\n";
+        let p = parse_sse_events(buf);
+        expect(p.events.length).to_equal(1);
+        expect(p.events[0]).to_equal("last-token");
+        expect(p.done).to_equal(true);
+    });
+
+    test("handles CRLF line endings", fn() {
+        let buf = "data: windows\r\n\r\n";
+        let p = parse_sse_events(buf);
+        expect(p.events.length).to_equal(1);
+        expect(p.events[0]).to_equal("windows");
+    });
+
+    test("skips events with no data fields", fn() {
+        let buf = "event: ping\n\ndata: real\n\n";
+        let p = parse_sse_events(buf);
+        expect(p.events.length).to_equal(1);
+        expect(p.events[0]).to_equal("real");
+    });
+
+    test("returns empty when no complete events", fn() {
+        let buf = "data: half";
+        let p = parse_sse_events(buf);
+        expect(p.events.length).to_equal(0);
+        expect(p.remainder).to_equal("data: half");
+    });
+});
+
+describe("parse_openai_delta", fn() {
+    test("extracts the delta.content field", fn() {
+        let payload = `{"choices":[{"delta":{"content":"Hello"}}]}`;
+        expect(parse_openai_delta(payload, json_parse)).to_equal("Hello");
+    });
+
+    test("returns empty string when delta has no content", fn() {
+        let payload = `{"choices":[{"delta":{"role":"assistant"}}]}`;
+        expect(parse_openai_delta(payload, json_parse)).to_equal("");
+    });
+
+    test("returns empty string when choices is empty", fn() {
+        expect(parse_openai_delta(`{"choices":[]}`, json_parse)).to_equal("");
+    });
+
+    test("returns empty string on malformed JSON", fn() {
+        expect(parse_openai_delta("not json at all", json_parse)).to_equal("");
+    });
+
+    test("handles multi-byte unicode in content", fn() {
+        let payload = `{"choices":[{"delta":{"content":"→ done 🎉"}}]}`;
+        expect(parse_openai_delta(payload, json_parse)).to_equal("→ done 🎉");
     });
 });
 
