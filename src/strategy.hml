@@ -23,7 +23,32 @@ export let STRATEGY_COLD = "cold";
 // attempt_num is 1-based: 1 is the FIRST retry (i.e. the 2nd total LLM
 // call), not the initial attempt. The initial attempt has no strategy;
 // it's just the user's prompt.
-export fn pick_strategy(attempt_num: i32): string {
+//
+// error_type: "syntax", "runtime", "logic", or "unknown"
+export fn pick_strategy(attempt_num: i32, error_type: string): string {
+    // Syntax errors benefit from cold resampling - the model is misreading
+    // the language syntax, so giving it feedback just makes it double down.
+    if (error_type == "syntax") {
+        return STRATEGY_COLD;
+    }
+    
+    // Logic errors benefit from feedback - the model understands the language
+    // but got the logic wrong, so showing it the error helps.
+    if (error_type == "logic") {
+        return STRATEGY_FEEDBACK;
+    }
+    
+    // Runtime errors: first retry with feedback, then cold resample
+    // This is a middle ground - maybe it's a simple fix, but if not,
+    // we need fresh perspective.
+    if (error_type == "runtime") {
+        if (attempt_num <= 1) {
+            return STRATEGY_FEEDBACK;
+        }
+        return STRATEGY_COLD;
+    }
+    
+    // Default: feedback first, then cold
     if (attempt_num <= 1) {
         return STRATEGY_FEEDBACK;
     }
@@ -31,8 +56,9 @@ export fn pick_strategy(attempt_num: i32): string {
 }
 
 // Temperature to use for a given retry attempt.
-export fn temperature_for(attempt_num: i32, base_temp): number {
-    if (pick_strategy(attempt_num) == STRATEGY_COLD) {
+// error_type: "syntax", "runtime", "logic", or "unknown"
+export fn temperature_for(attempt_num: i32, base_temp, error_type: string): number {
+    if (pick_strategy(attempt_num, error_type) == STRATEGY_COLD) {
         // Bump for diversity on cold resamples. Higher than base but not
         // wild — we still want on-task responses.
         return 0.7;
