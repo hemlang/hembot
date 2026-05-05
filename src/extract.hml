@@ -24,11 +24,58 @@ export fn extract_code(response) {
     return null;
 }
 
+// Categorize an error based on the output message.
+// Returns: "syntax", "runtime", "logic", or "unknown"
+export fn categorize_error(result) {
+    let output = result.output ?? "";
+    
+    // Syntax errors typically mention parse errors, unexpected tokens, etc.
+    // Check for common syntax error keywords (case-sensitive, but covers common cases)
+    if (output.contains("parse") || output.contains("Parse") || 
+        output.contains("syntax") || output.contains("Syntax") ||
+        output.contains("unexpected") || output.contains("Unexpected") ||
+        output.contains("expected") || output.contains("Expected") ||
+        output.contains("Error at") || output.contains("missing") || 
+        output.contains("Missing") || output.contains("Expect")) {
+        return "syntax";
+    }
+    
+    // Runtime errors mention things like null dereference, index out of bounds, etc.
+    if (output.contains("null") || output.contains("Null") ||
+        output.contains("index") || output.contains("Index") ||
+        output.contains("bounds") || output.contains("Bounds") ||
+        output.contains("undefined") || output.contains("Undefined") ||
+        output.contains("cannot read") || output.contains("Cannot read") ||
+        output.contains("does not have") || output.contains("Does not have")) {
+        return "runtime";
+    }
+    
+    // Logic errors are everything else - wrong output, assertion failures, etc.
+    if (result.exit_code != 0) {
+        return "logic";
+    }
+    
+    return "unknown";
+}
+
 // Build a short feedback message the agent can send back to the model
 // after running extracted code. `result` should have `exit_code` and `output`.
 export fn build_retry_feedback(result) {
     let output = result.output ?? "";
-    return `That code failed when I ran it. Exit code ${result.exit_code}.\n\nOutput:\n${output}\n\nPlease fix and try again.`;
+    let error_type = categorize_error(result);
+    
+    let hint = "";
+    if (error_type == "syntax") {
+        hint = "This is a syntax error. Check Hemlock syntax rules: semicolons are required, use template strings for interpolation, and remember that / always does floating-point division.";
+    } else if (error_type == "runtime") {
+        hint = "This is a runtime error. Check for null values, array bounds, and whether objects have the properties you're accessing.";
+    } else if (error_type == "logic") {
+        hint = "The code runs but produces incorrect output. Review the logic and try again.";
+    }
+    
+    let message = `That code failed when I ran it. Exit code ${result.exit_code}.\\n\\nOutput:\\n${output}\\n\\n${hint}\\n\\nPlease fix and try again.`;
+    
+    return message;
 }
 
 // Parse one pass of an OpenAI-style SSE chunk-buffer into its finished events,
