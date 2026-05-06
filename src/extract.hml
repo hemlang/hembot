@@ -21,7 +21,34 @@ export fn extract_code(response) {
             }
         }
     }
+    
+    // Fallback: if no fenced block found, check if the entire response
+    // looks like Hemlock code (starts with fn, let, print, import, define, etc.)
+    let trimmed = response.trim();
+    if (looks_like_hemlock_code(trimmed)) {
+        return trimmed;
+    }
+    
     return null;
+}
+
+// Heuristic to detect if text looks like Hemlock code.
+// Returns true if the text starts with common Hemlock keywords/patterns.
+fn looks_like_hemlock_code(text) {
+    // Common Hemlock starting patterns
+    let patterns = [
+        "fn ", "let ", "var ", "const ", "import ", "define ",
+        "print(", "write(", "if (", "for (", "while (", "match (",
+        "return ", "throw ", "try {", "defer "
+    ];
+    
+    for (pattern in patterns) {
+        if (text.starts_with(pattern)) {
+            return true;
+        }
+    }
+    
+    return false;
 }
 
 // Categorize an error based on the output message.
