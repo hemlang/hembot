@@ -146,6 +146,38 @@ describe("build_retry_feedback", fn() {
     });
 });
 
+describe("looks_like_hemlock_code", fn() {
+    // This tests the private helper by testing extract_code's fallback behavior
+    test("detects fn declarations", fn() {
+        let code = extract_code("fn test() { return 42; }");
+        expect(code != null).to_equal(true);
+        expect(code.contains("fn test()")).to_equal(true);
+    });
+    
+    test("detects let declarations", fn() {
+        let code = extract_code("let x = 42; print(x);");
+        expect(code != null).to_equal(true);
+        expect(code.contains("let x")).to_equal(true);
+    });
+    
+    test("detects print calls", fn() {
+        let code = extract_code("print(42);");
+        expect(code != null).to_equal(true);
+        expect(code.contains("print(")).to_equal(true);
+    });
+    
+    test("detects import statements", fn() {
+        let code = extract_code("import { HashMap } from \"@stdlib/collections\";");
+        expect(code != null).to_equal(true);
+        expect(code.contains("import")).to_equal(true);
+    });
+    
+    test("returns false for non-code text", fn() {
+        let code = extract_code("Here is some explanatory text that is not code at all.");
+        expect(code).to_equal(null);
+    });
+});
+
 let stats = run();
 if (!stats.success) {
     panic("tests failed");
