@@ -1,0 +1,49 @@
+// Pure helpers for hembot's HTTP API (serve mode).
+//
+// These shape requests/responses for `POST /chat` and stay free of I/O so they
+// can be unit-tested without a live server or model. `json_parse`/`json_stringify`
+// are injected (same pattern as extract.hml's parse_openai_delta).
+
+// Parse a `POST /chat` body. Expects `{ "prompt": "...", "execute": true }`.
+// `execute` is optional and defaults to true.
+// Returns { ok, prompt, execute, error }.
+export fn parse_chat_request(body, json_parse) {
+    let obj = null;
+    try {
+        obj = json_parse(body);
+    } catch (e) {
+        return { ok: false, prompt: "", execute: true, error: "invalid JSON body" };
+    }
+
+    if (obj == null || typeof(obj) != "object") {
+        return { ok: false, prompt: "", execute: true, error: "body must be a JSON object" };
+    }
+
+    let prompt = obj?.prompt;
+    if (prompt == null || typeof(prompt) != "string" || prompt.trim() == "") {
+        return { ok: false, prompt: "", execute: true, error: "missing or empty 'prompt'" };
+    }
+
+    // execute defaults to true; only an explicit `false` turns it off.
+    let execute = true;
+    if (obj?.execute == false) {
+        execute = false;
+    }
+
+    return { ok: true, prompt: prompt, execute: execute, error: "" };
+}
+
+// Build the JSON body for a successful `/chat` response.
+// `code` is the extracted source or null; `sandbox` is { exit_code, output } or null.
+export fn chat_response_json(response, code, sandbox, json_stringify) {
+    return json_stringify({
+        response: response,
+        code: code,
+        sandbox: sandbox,
+    });
+}
+
+// Build a JSON error body, e.g. {"error":"missing or empty 'prompt'"}.
+export fn error_json(message, json_stringify) {
+    return json_stringify({ error: message });
+}

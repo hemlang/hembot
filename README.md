@@ -68,6 +68,43 @@ main();
 | `--retry` | off | Auto-retry up to 3 times when extracted code fails (hybrid strategy: feedback first, then cold resamples) |
 | `--no-stream` | off | Disable token streaming; wait for the full response before printing |
 | `--no-spinner` | off | Silence the "thinking" spinner and the timing line (clean scripted output) |
+| `--serve` | off | Run an HTTP API instead of the interactive REPL (see below) |
+| `--port <n>` | `8080` | Port to bind when serving |
+| `--host <addr>` | `127.0.0.1` | Address to bind when serving |
+
+## HTTP API
+
+Run hembot as a local HTTP service instead of the REPL — handy for editors,
+scripts, or other tools:
+
+```bash
+hemlock src/hembot.hml --serve --port 8080
+# or the compiled binary:  ./hembot --serve --port 8080
+```
+
+It points at the same `--url` llama-server as the REPL. Each request is
+stateless (a fresh `[system, user]` conversation).
+
+**`GET /health`** → `{"status":"ok","model":"local"}`
+
+**`POST /chat`** — generate, extract code, and (optionally) run it:
+
+```bash
+curl -s -X POST http://127.0.0.1:8080/chat \
+  -d '{"prompt": "write a hemlock program that prints 7"}'
+```
+```json
+{
+  "response": "```hemlock\nprint(7);\n```",
+  "code": "print(7);",
+  "sandbox": { "exit_code": 0, "output": "7\n" }
+}
+```
+
+- `execute` (optional, default `true`) — set to `false` to skip the sandbox;
+  `sandbox` is then `null`.
+- `code` is `null` when the response contains no fenced Hemlock.
+- Bad/empty `prompt` → `400`; an upstream model failure → `502`.
 
 ## Slash commands
 

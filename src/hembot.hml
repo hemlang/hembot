@@ -3,7 +3,7 @@
 // extracts Hemlock code from responses, runs it in a sandbox,
 // and optionally feeds errors back for self-correction.
 
-import { post_json_timeout, post_json_stream } from "@stdlib/http";
+import { post_json_timeout, post_json_stream, HttpServer } from "@stdlib/http";
 import { parse as json_parse, stringify as json_stringify } from "@stdlib/json";
 import { read_file, write_file, exists } from "@stdlib/fs";
 import { run_capture_safe } from "@stdlib/shell";
@@ -14,6 +14,7 @@ import { extract_code, build_retry_feedback, parse_sse_events, parse_openai_delt
 import { load_config, parse_cli } from "./config.hml";
 import { pick_strategy, temperature_for, STRATEGY_FEEDBACK, STRATEGY_COLD } from "./strategy.hml";
 import { start as spinner_start, stop as spinner_stop, format_summary, format_elapsed } from "./spinner.hml";
+import { parse_chat_request, chat_response_json, error_json } from "./api.hml";
 
 // ────────────────────────────────────────────────────────────────────────────
 // LLM call — streaming version. Prints each token as it arrives and returns
@@ -126,6 +127,22 @@ fn chat(config, messages, label, temperature) {
         return chat_streaming(config, messages, label, temperature);
     }
     return chat_blocking(config, messages, label, temperature);
+}
+
+// Non-streaming generation with no terminal output — used by the HTTP API,
+// which returns JSON rather than printing to a TTY.
+fn generate_quiet(config, messages, temperature) {
+    let payload = {
+        model: config.model,
+        messages: messages,
+        temperature: temperature,
+        max_tokens: config.max_tokens,
+    };
+    let resp = post_json_timeout(config.url, payload, config.timeout_ms);
+    if (resp.status_code != 200) {
+        throw `LLM request failed: HTTP ${resp.status_code}`;
+    }
+    return json_parse(resp.body).choices[0].message.content;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -291,6 +308,61 @@ fn retry_loop(config, messages, last_result, original_user_prompt) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// HTTP API (serve mode)
+//
+//   GET  /health  → { "status": "ok", "model": ... }
+//   POST /chat    → { "prompt": "...", "execute": true }
+//                 ← { "response": ..., "code": ... | null,
+//                     "sandbox": { "exit_code": N, "output": ... } | null }
+//
+// Stateless per request: each call is a fresh [system, user] conversation.
+
+fn json_response(status, body) {
+    return { status: status, content_type: "application/json", body: body };
+}
+
+fn run_server(config) {
+    let system_prompt = read_file(config.system_prompt_file);
+    let srv = HttpServer(config.serve_host, config.serve_port);
+
+    srv.route("GET", "/health", fn(req) {
+        return json_response(200, json_stringify({ status: "ok", model: config.model }));
+    });
+
+    srv.route("POST", "/chat", fn(req) {
+        let parsed = parse_chat_request(req.body, json_parse);
+        if (!parsed.ok) {
+            return json_response(400, error_json(parsed.error, json_stringify));
+        }
+
+        let messages = [
+            { role: "system", content: system_prompt },
+            { role: "user", content: parsed.prompt },
+        ];
+
+        let response = null;
+        try {
+            response = generate_quiet(config, messages, config.temperature);
+        } catch (e) {
+            return json_response(502, error_json(`${e}`, json_stringify));
+        }
+
+        let code = extract_code(response);
+        let sandbox = null;
+        if (parsed.execute && code != null) {
+            sandbox = run_hemlock(code);
+        }
+        return json_response(200, chat_response_json(response, code, sandbox, json_stringify));
+    });
+
+    print(`${BOLD}${CYAN}Hembot API${RESET} on ${DIM}http://${config.serve_host}:${config.serve_port}${RESET}`);
+    print(`${DIM}  GET  /health${RESET}`);
+    print(`${DIM}  POST /chat   {"prompt": "...", "execute": true}${RESET}`);
+    print(`${DIM}Ctrl-C to stop.${RESET}`);
+    srv.serve(0);   // serve forever
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Main loop
 
 fn main() {
@@ -299,6 +371,11 @@ fn main() {
 
     if (!exists(config.system_prompt_file)) {
         print_error(`System prompt file not found: ${config.system_prompt_file}`);
+        return;
+    }
+
+    if (config.serve) {
+        run_server(config);
         return;
     }
 

@@ -1,0 +1,72 @@
+// Unit tests for src/api.hml (pure request/response helpers).
+import { describe, test, expect, run } from "@stdlib/testing";
+import { parse as json_parse, stringify as json_stringify } from "@stdlib/json";
+import { parse_chat_request, chat_response_json, error_json } from "../src/api.hml";
+
+describe("parse_chat_request", fn() {
+    test("accepts a prompt with explicit execute", fn() {
+        let r = parse_chat_request("{\"prompt\":\"print 1\",\"execute\":true}", json_parse);
+        expect(r.ok).to_equal(true);
+        expect(r.prompt).to_equal("print 1");
+        expect(r.execute).to_equal(true);
+    });
+
+    test("execute defaults to true when omitted", fn() {
+        let r = parse_chat_request("{\"prompt\":\"hi\"}", json_parse);
+        expect(r.ok).to_equal(true);
+        expect(r.execute).to_equal(true);
+    });
+
+    test("execute:false is honored", fn() {
+        let r = parse_chat_request("{\"prompt\":\"hi\",\"execute\":false}", json_parse);
+        expect(r.ok).to_equal(true);
+        expect(r.execute).to_equal(false);
+    });
+
+    test("rejects a missing prompt", fn() {
+        let r = parse_chat_request("{\"execute\":true}", json_parse);
+        expect(r.ok).to_equal(false);
+    });
+
+    test("rejects an empty/whitespace prompt", fn() {
+        let r = parse_chat_request("{\"prompt\":\"   \"}", json_parse);
+        expect(r.ok).to_equal(false);
+    });
+
+    test("rejects invalid JSON", fn() {
+        let r = parse_chat_request("not json", json_parse);
+        expect(r.ok).to_equal(false);
+        expect(r.error).to_equal("invalid JSON body");
+    });
+});
+
+describe("chat_response_json", fn() {
+    test("round-trips response, code, and sandbox", fn() {
+        let body = chat_response_json("here", "print(1);", { exit_code: 0, output: "1\n" }, json_stringify);
+        let parsed = json_parse(body);
+        expect(parsed.response).to_equal("here");
+        expect(parsed.code).to_equal("print(1);");
+        expect(parsed.sandbox.exit_code).to_equal(0);
+        expect(parsed.sandbox.output).to_equal("1\n");
+    });
+
+    test("allows null code and sandbox", fn() {
+        let body = chat_response_json("no code here", null, null, json_stringify);
+        let parsed = json_parse(body);
+        expect(parsed.response).to_equal("no code here");
+        expect(parsed.code).to_equal(null);
+        expect(parsed.sandbox).to_equal(null);
+    });
+});
+
+describe("error_json", fn() {
+    test("wraps a message", fn() {
+        let parsed = json_parse(error_json("nope", json_stringify));
+        expect(parsed.error).to_equal("nope");
+    });
+});
+
+let stats = run();
+if (!stats.success) {
+    panic("tests failed");
+}

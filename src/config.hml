@@ -10,10 +10,12 @@ export let DEFAULT_TEMPERATURE = 0.2;
 export let DEFAULT_MAX_TOKENS = 2048;
 export let DEFAULT_TIMEOUT_MS = 120000;
 export let DEFAULT_MAX_RETRIES = 3;
+export let DEFAULT_SERVE_HOST = "127.0.0.1";
+export let DEFAULT_SERVE_PORT = 8080;
 
 // String options that take a value: `--url http://...` instead of
 // being parsed as a flag plus a positional argument.
-export let CLI_STRING_OPTIONS = ["url", "model", "system"];
+export let CLI_STRING_OPTIONS = ["url", "model", "system", "host", "port"];
 
 export fn parse_cli(argv) {
     return cli.parse(argv, { strings: CLI_STRING_OPTIONS });
@@ -36,5 +38,9 @@ export fn load_config(parsed) {
         // Generation feedback (spinner while waiting + a timing line after) is
         // on by default; `--no-spinner` silences it for clean scripted output.
         spinner: !cli.has_flag(parsed, "no-spinner"),
+        // `--serve` runs an HTTP API instead of the interactive loop.
+        serve: cli.has_flag(parsed, "serve"),
+        serve_host: cli.get_option(parsed, "host") ?? DEFAULT_SERVE_HOST,
+        serve_port: i32(cli.get_option(parsed, "port") ?? `${DEFAULT_SERVE_PORT}`),
     };
 }
