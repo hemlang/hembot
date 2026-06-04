@@ -67,6 +67,7 @@ main();
 | `--no-exec` | off | Don't execute code blocks, just show them |
 | `--retry` | off | Auto-retry up to 3 times when extracted code fails (hybrid strategy: feedback first, then cold resamples) |
 | `--no-stream` | off | Disable token streaming; wait for the full response before printing |
+| `--no-spinner` | off | Silence the "thinking" spinner and the timing line (clean scripted output) |
 
 ## Slash commands
 

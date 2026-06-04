@@ -19,6 +19,8 @@ describe("load_config defaults", fn() {
         expect(cfg.system_prompt_file).to_equal(DEFAULT_SYSTEM_PROMPT);
         expect(cfg.run_code).to_equal(true);
         expect(cfg.auto_retry).to_equal(false);
+        expect(cfg.stream).to_equal(true);
+        expect(cfg.spinner).to_equal(true);
     });
 
     test("temperature and timeout have sensible defaults", fn() {
@@ -53,6 +55,16 @@ describe("load_config overrides", fn() {
     test("--retry enables auto-retry", fn() {
         let cfg = load_config(parse_fake_args(["--retry"]));
         expect(cfg.auto_retry).to_equal(true);
+    });
+
+    test("--no-stream disables streaming", fn() {
+        let cfg = load_config(parse_fake_args(["--no-stream"]));
+        expect(cfg.stream).to_equal(false);
+    });
+
+    test("--no-spinner disables generation feedback", fn() {
+        let cfg = load_config(parse_fake_args(["--no-spinner"]));
+        expect(cfg.spinner).to_equal(false);
     });
 });
 

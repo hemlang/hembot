@@ -7,11 +7,13 @@ import { post_json_timeout, post_json_stream } from "@stdlib/http";
 import { parse as json_parse, stringify as json_stringify } from "@stdlib/json";
 import { read_file, write_file, exists } from "@stdlib/fs";
 import { run_capture_safe } from "@stdlib/shell";
+import { time_ms } from "@stdlib/time";
 import { BOLD, DIM, CYAN, GREEN, RED, RESET } from "@stdlib/terminal";
 
 import { extract_code, build_retry_feedback, parse_sse_events, parse_openai_delta, categorize_error } from "./extract.hml";
 import { load_config, parse_cli } from "./config.hml";
 import { pick_strategy, temperature_for, STRATEGY_FEEDBACK, STRATEGY_COLD } from "./strategy.hml";
+import { start as spinner_start, stop as spinner_stop, format_summary, format_elapsed } from "./spinner.hml";
 
 // ────────────────────────────────────────────────────────────────────────────
 // LLM call — streaming version. Prints each token as it arrives and returns
@@ -19,7 +21,18 @@ import { pick_strategy, temperature_for, STRATEGY_FEEDBACK, STRATEGY_COLD } from
 // silently via `chat_blocking` when `config.stream` is false (handy for
 // tests and for servers that don't support SSE).
 
-fn chat_blocking(config, messages, temperature) {
+// Spinner shown while the model churns. Pre-colored so spinner.hml stays
+// free of terminal coupling. Returns a handle, or null when disabled.
+fn begin_wait(config) {
+    if (!config.spinner) { return null; }
+    return spinner_start(`${DIM}thinking${RESET}`);
+}
+
+fn end_wait(handle) {
+    if (handle != null) { spinner_stop(handle); }
+}
+
+fn chat_blocking(config, messages, label, temperature) {
     let payload = {
         model: config.model,
         messages: messages,
@@ -27,13 +40,21 @@ fn chat_blocking(config, messages, temperature) {
         max_tokens: config.max_tokens,
     };
 
+    let started = time_ms();
+    let sp = begin_wait(config);
     let resp = post_json_timeout(config.url, payload, config.timeout_ms);
+    end_wait(sp);
     if (resp.status_code != 200) {
         throw `LLM request failed: HTTP ${resp.status_code}\n${resp.body}`;
     }
 
-    let data = json_parse(resp.body);
-    return data.choices[0].message.content;
+    let elapsed = time_ms() - started;
+    let content = json_parse(resp.body).choices[0].message.content;
+    write(label + content + "\n");
+    if (config.spinner) {
+        print(`${DIM}── ${format_elapsed(elapsed)} ──${RESET}`);
+    }
+    return content;
 }
 
 fn chat_streaming(config, messages, label, temperature) {
@@ -45,18 +66,22 @@ fn chat_streaming(config, messages, label, temperature) {
         stream: true,
     };
 
+    // Spin *before* the request — `post_json_stream` itself blocks through the
+    // prompt-processing wait, so the spinner must already be running by then.
+    // It's cleared the moment real text arrives.
+    let started = time_ms();
+    let sp = begin_wait(config);
     let s = post_json_stream(config.url, payload, config.timeout_ms);
     if (s.status_code != 200) {
+        end_wait(sp);
         s.close();
         throw `LLM request failed: HTTP ${s.status_code}`;
     }
-
-    // Print the label exactly once, at the start.
-    write(label);
-
     let full = "";
     let buffer = "";
     let finished = false;
+    let tokens = 0;
+    let labeled = false;
 
     while (!s.done && !finished) {
         let chunk = s.read(config.timeout_ms);
@@ -69,16 +94,30 @@ fn chat_streaming(config, messages, label, temperature) {
         for (payload_str in parsed.events) {
             let delta = parse_openai_delta(payload_str, json_parse);
             if (delta.length > 0) {
+                if (!labeled) {
+                    end_wait(sp);
+                    sp = null;
+                    write(label);
+                    labeled = true;
+                }
                 write(delta);
                 full = full + delta;
+                tokens = tokens + 1;
             }
         }
 
         if (parsed.done) { finished = true; }
     }
 
+    end_wait(sp);  // stream ended before any token arrived
     s.close();
-    write("\n");  // terminate the streamed line so the next prompt is on its own row
+    if (labeled) {
+        write("\n");  // terminate the streamed line so the next prompt is on its own row
+    }
+    if (config.spinner) {
+        let elapsed = time_ms() - started;
+        print(`${DIM}── ${format_summary(tokens, elapsed)} ──${RESET}`);
+    }
     return full;
 }
 
@@ -86,9 +125,7 @@ fn chat(config, messages, label, temperature) {
     if (config.stream) {
         return chat_streaming(config, messages, label, temperature);
     }
-    let response = chat_blocking(config, messages, temperature);
-    write(label + response + "\n");
-    return response;
+    return chat_blocking(config, messages, label, temperature);
 }
 
 // ────────────────────────────────────────────────────────────────────────────

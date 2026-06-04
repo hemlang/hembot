@@ -1,0 +1,85 @@
+// Spinner + timing helpers for hembot.
+//
+// On CPU the 7B model can take 15-30s before the first token arrives, which
+// looks frozen. `start()` spawns a background task that animates a spinner with
+// a live elapsed timer while the main task blocks on the HTTP request/read;
+// `stop()` halts it and clears the line. The pure formatting helpers
+// (frame_at, format_elapsed, format_summary) are unit-tested without any I/O.
+
+import { time_ms, sleep } from "@stdlib/time";
+
+// Braille spinner frames — smooth and compact.
+export let FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+// Don't draw anything until the wait exceeds this — avoids a flicker on fast
+// responses (e.g. a cached prompt that streams immediately).
+let WARMUP_MS = 120;
+let TICK_S = 0.08;  // ~12.5 fps
+
+// ── Pure helpers (testable) ──────────────────────────────────────────────────
+
+// Frame for animation step `i`, wrapping around the cycle.
+export fn frame_at(i: i64): string {
+    let n = FRAMES.length;
+    let idx = i % n;
+    if (idx < 0) { idx = idx + n; }
+    return FRAMES[idx];
+}
+
+// Render a millisecond duration as seconds with one decimal, e.g. 12345 -> "12.3s".
+export fn format_elapsed(ms: i64): string {
+    let tenths = i64((ms + 50) / 100);   // round to nearest 0.1s
+    let whole = i64(tenths / 10);
+    let frac = tenths % 10;
+    return `${whole}.${frac}s`;
+}
+
+// One-line post-generation summary, e.g. "142 tok · 12.3s · 11.5 tok/s".
+// Omits the rate when it can't be computed.
+export fn format_summary(tokens: i64, ms: i64): string {
+    let base = `${tokens} tok · ${format_elapsed(ms)}`;
+    if (ms > 0 && tokens > 0) {
+        let tps10 = i64(tokens * 10000 / ms);   // tokens/sec × 10
+        let whole = i64(tps10 / 10);
+        let frac = tps10 % 10;
+        base = base + ` · ${whole}.${frac} tok/s`;
+    }
+    return base;
+}
+
+// ── Animation (I/O + concurrency) ────────────────────────────────────────────
+
+// Background loop: poll the stop channel; between polls, redraw the spinner
+// frame with a live elapsed timer. Clears its line on exit so the caller can
+// print cleanly. `message` is passed pre-colored by the caller.
+async fn animate(stop_ch, message) {
+    // Warmup: if we're told to stop within WARMUP_MS, draw nothing at all.
+    let early = stop_ch.recv_timeout(WARMUP_MS);
+    if (early != null) { return; }
+
+    let start = time_ms();
+    let i = 0;
+    loop {
+        let elapsed = format_elapsed(time_ms() - start);
+        write(`\r${frame_at(i)} ${message} ${elapsed} `);
+        i = i + 1;
+
+        let stop = stop_ch.recv_timeout(1);
+        if (stop != null) { break; }
+        sleep(TICK_S);
+    }
+    write("\r\x1b[K");   // carriage return + clear-to-end-of-line
+}
+
+// Start the spinner. Returns a handle to pass to `stop()`.
+export fn start(message) {
+    let ch = channel(1);
+    let task = spawn(animate, ch, message);
+    return { ch: ch, task: task };
+}
+
+// Stop the spinner and wait for it to clear its line.
+export fn stop(handle) {
+    handle.ch.send(1);
+    await handle.task;
+}

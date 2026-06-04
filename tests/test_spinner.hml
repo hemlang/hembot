@@ -1,0 +1,57 @@
+// Unit tests for src/spinner.hml (pure formatting helpers).
+// The animator itself does I/O + concurrency and is exercised manually.
+import { describe, test, expect, run } from "@stdlib/testing";
+import { frame_at, format_elapsed, format_summary, FRAMES } from "../src/spinner.hml";
+
+describe("frame_at", fn() {
+    test("returns the frame at the given index", fn() {
+        expect(frame_at(0)).to_equal(FRAMES[0]);
+        expect(frame_at(1)).to_equal(FRAMES[1]);
+    });
+
+    test("wraps around the cycle", fn() {
+        expect(frame_at(FRAMES.length)).to_equal(FRAMES[0]);
+        expect(frame_at(FRAMES.length + 1)).to_equal(FRAMES[1]);
+    });
+
+    test("handles negative indices", fn() {
+        expect(frame_at(-1)).to_equal(FRAMES[FRAMES.length - 1]);
+    });
+});
+
+describe("format_elapsed", fn() {
+    test("renders seconds with one decimal", fn() {
+        expect(format_elapsed(12345)).to_equal("12.3s");
+        expect(format_elapsed(569)).to_equal("0.6s");
+    });
+
+    test("zero is 0.0s", fn() {
+        expect(format_elapsed(0)).to_equal("0.0s");
+    });
+
+    test("rounds to the nearest tenth", fn() {
+        expect(format_elapsed(950)).to_equal("1.0s");   // 0.95 -> 1.0
+        expect(format_elapsed(49)).to_equal("0.0s");    // 0.049 -> 0.0
+        expect(format_elapsed(1000)).to_equal("1.0s");
+    });
+});
+
+describe("format_summary", fn() {
+    test("includes token count, elapsed, and rate", fn() {
+        expect(format_summary(142, 12345)).to_equal("142 tok · 12.3s · 11.5 tok/s");
+    });
+
+    test("round number rate", fn() {
+        expect(format_summary(10, 1000)).to_equal("10 tok · 1.0s · 10.0 tok/s");
+    });
+
+    test("omits the rate when no tokens", fn() {
+        expect(format_summary(0, 800)).to_equal("0 tok · 0.8s");
+    });
+
+    test("omits the rate when no elapsed time", fn() {
+        expect(format_summary(5, 0)).to_equal("5 tok · 0.0s");
+    });
+});
+
+run();

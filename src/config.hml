@@ -33,5 +33,8 @@ export fn load_config(parsed) {
         // Streaming is on by default; `--no-stream` falls back to a single
         // blocking POST that returns the whole response at once.
         stream: !cli.has_flag(parsed, "no-stream"),
+        // Generation feedback (spinner while waiting + a timing line after) is
+        // on by default; `--no-spinner` silences it for clean scripted output.
+        spinner: !cli.has_flag(parsed, "no-spinner"),
     };
 }
