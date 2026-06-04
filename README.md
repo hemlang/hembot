@@ -6,6 +6,12 @@ An interactive coding agent for the [Hemlock](https://github.com/hemlang/hemlock
 
 Hembot talks to a local `llama-server` running a Hemlock-tuned model (default: [`Hemlock-Apothecary-7B`](https://huggingface.co/nbeerbower/Hemlock-Apothecary-7B)), extracts Hemlock code from its responses, runs it in a sandbox, and can optionally feed errors back so the model fixes its own bugs.
 
+Use it in your terminal, over an HTTP API, or in a cute little web chat:
+
+<p align="center">
+  <img src="docs/screenshot.png" alt="hembot web UI" width="540">
+</p>
+
 ## Setup
 
 1. Install Hemlock 2.0+ and make sure `hemlock` is on your `PATH`.
