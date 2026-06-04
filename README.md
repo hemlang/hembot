@@ -85,6 +85,10 @@ hemlock src/hembot.hml --serve --port 8080
 It points at the same `--url` llama-server as the REPL. Each request is
 stateless (a fresh `[system, user]` conversation).
 
+Open **`http://localhost:8080/`** in a browser for a little 🌿 kawaii chat UI
+(served from `web/index.html`; pass `--no-ui` to disable, or `--ui <path>` to
+point elsewhere).
+
 **`GET /health`** → `{"status":"ok","model":"local"}`
 
 **`POST /chat`** — generate, extract code, and (optionally) run it:

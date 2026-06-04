@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>hembot 🌿</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Pacifico&family=Quicksand:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --mint: #a8d5ba;
+    --mint-soft: #c7e6d2;
+    --sage: #7fb069;
+    --deep: #3e6b4f;
+    --deeper: #2f5540;
+    --cream: #f7f9f2;
+    --paper: #ffffff;
+    --ink: #355c43;
+    --shadow: rgba(62, 107, 79, 0.18);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: 'Quicksand', system-ui, -apple-system, sans-serif;
+    background: radial-gradient(140% 120% at 50% -10%, #eef6e9 0%, var(--cream) 55%);
+    color: var(--ink);
+    display: flex; flex-direction: column; align-items: center;
+    min-height: 100%;
+  }
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 22px 18px 10px;
+  }
+  header .leaf { font-size: 30px; transform: rotate(-12deg); }
+  header h1 {
+    font-family: 'Pacifico', cursive;
+    color: var(--deep);
+    font-size: 42px; margin: 0; font-weight: 400;
+    text-shadow: 0 2px 0 #ffffff, 0 3px 6px var(--shadow);
+  }
+  header .sub { font-size: 13px; color: var(--sage); margin-top: 2px; font-weight: 600; }
+
+  /* cute robo avatar */
+  .robo { width: 46px; height: 46px; flex: 0 0 auto; }
+
+  main {
+    width: min(720px, 94vw);
+    flex: 1 1 auto;
+    display: flex; flex-direction: column;
+    gap: 12px;
+    padding: 8px 12px 0;
+    overflow-y: auto;
+  }
+  .msg { display: flex; gap: 10px; align-items: flex-end; animation: pop .18s ease-out; }
+  .msg.user { flex-direction: row-reverse; }
+  @keyframes pop { from { transform: translateY(6px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+  .bubble {
+    max-width: 78%;
+    padding: 12px 15px;
+    border-radius: 20px;
+    box-shadow: 0 3px 10px var(--shadow);
+    line-height: 1.45;
+    word-wrap: break-word;
+  }
+  .msg.bot .bubble { background: var(--paper); border: 2px solid var(--mint); border-bottom-left-radius: 6px; }
+  .msg.user .bubble { background: var(--sage); color: #fff; border-bottom-right-radius: 6px; font-weight: 600; }
+  .msg .av { width: 38px; height: 38px; flex: 0 0 auto; }
+
+  pre.code {
+    margin: 8px 0 0;
+    background: #f0f6ed;
+    border: 1.5px dashed var(--mint);
+    border-radius: 14px;
+    padding: 11px 13px;
+    overflow-x: auto;
+    font-family: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    font-size: 13px; color: var(--deeper);
+  }
+  .sandbox {
+    margin-top: 8px; border-radius: 14px; padding: 10px 13px;
+    font-family: ui-monospace, Menlo, monospace; font-size: 13px;
+    white-space: pre-wrap;
+  }
+  .sandbox.ok  { background: #eaf7ee; border: 1.5px solid var(--mint); color: var(--deeper); }
+  .sandbox.bad { background: #fdecee; border: 1.5px solid #f0a6a6; color: #9c3b3b; }
+  .sandbox .tag { font-family: 'Quicksand', sans-serif; font-weight: 700; display: block; margin-bottom: 4px; }
+  .err { color: #9c3b3b; font-weight: 600; }
+
+  /* thinking dots */
+  .dots { display: inline-flex; gap: 5px; padding: 4px 2px; }
+  .dots i { width: 8px; height: 8px; background: var(--sage); border-radius: 50%; display: inline-block; animation: bounce 1s infinite; }
+  .dots i:nth-child(2) { animation-delay: .15s; }
+  .dots i:nth-child(3) { animation-delay: .3s; }
+  @keyframes bounce { 0%,80%,100% { transform: translateY(0); opacity:.5;} 40% { transform: translateY(-6px); opacity:1;} }
+
+  footer {
+    position: sticky; bottom: 0;
+    width: min(720px, 94vw);
+    padding: 12px; background: linear-gradient(transparent, var(--cream) 30%);
+  }
+  .composer {
+    display: flex; gap: 10px; align-items: center;
+    background: var(--paper);
+    border: 2px solid var(--mint);
+    border-radius: 26px;
+    padding: 6px 6px 6px 18px;
+    box-shadow: 0 5px 16px var(--shadow);
+  }
+  .composer input[type=text] {
+    flex: 1 1 auto; border: none; outline: none; background: transparent;
+    font-family: inherit; font-size: 15px; color: var(--ink);
+  }
+  .composer input::placeholder { color: #a9c6b3; }
+  .run-toggle { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--sage); font-weight: 600; user-select: none; cursor: pointer; }
+  .send {
+    border: none; cursor: pointer;
+    width: 44px; height: 44px; border-radius: 50%;
+    background: var(--sage); color: #fff; font-size: 19px;
+    box-shadow: 0 3px 8px var(--shadow);
+    transition: transform .12s;
+  }
+  .send:hover { transform: scale(1.08) rotate(8deg); }
+  .send:active { transform: scale(.94); }
+  .send:disabled { background: var(--mint); cursor: default; transform: none; }
+  .hint { text-align: center; font-size: 11px; color: #a9c6b3; margin-top: 6px; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="leaf">🌿</span>
+    <svg class="robo" viewBox="0 0 100 100" aria-hidden="true">
+      <path d="M30 18 q-12 0 -12 16 v8 q-8 2 -8 12 v22 q0 10 10 10 h40 q10 0 10 -10 v-22 q0 -10 -8 -12 v-8 q0 -16 -12 -16z" fill="#bfe3cb" stroke="#3e6b4f" stroke-width="3"/>
+      <rect x="26" y="30" width="40" height="30" rx="9" fill="#eef7f0" stroke="#3e6b4f" stroke-width="3"/>
+      <circle cx="38" cy="45" r="3.4" fill="#3e6b4f"/>
+      <path d="M50 45 q3 -3 6 0" fill="none" stroke="#3e6b4f" stroke-width="3" stroke-linecap="round"/>
+      <path d="M40 52 q5 4 10 0" fill="none" stroke="#3e6b4f" stroke-width="3" stroke-linecap="round"/>
+    </svg>
+    <div>
+      <h1>hembot</h1>
+      <div class="sub">your hemlock coding companion</div>
+    </div>
+  </header>
+
+  <main id="chat">
+    <div class="msg bot">
+      <svg class="av" viewBox="0 0 100 100"><use href="#robo-av"/></svg>
+      <div class="bubble">hi! 🌱 ask me to write some Hemlock and i'll run it for you in a sandbox.</div>
+    </div>
+  </main>
+
+  <footer>
+    <form class="composer" id="form">
+      <input type="text" id="input" placeholder="write a program that prints the first 10 primes…" autocomplete="off" autofocus />
+      <label class="run-toggle" title="run the code in a sandbox"><input type="checkbox" id="run" checked /> run</label>
+      <button class="send" id="send" type="submit" title="send">➜</button>
+    </form>
+    <div class="hint">each message is a fresh request · powered by a local Hemlock-tuned model</div>
+  </footer>
+
+  <!-- reusable avatar -->
+  <svg width="0" height="0" style="position:absolute"><defs><g id="robo-av">
+    <path d="M30 18 q-12 0 -12 16 v8 q-8 2 -8 12 v22 q0 10 10 10 h40 q10 0 10 -10 v-22 q0 -10 -8 -12 v-8 q0 -16 -12 -16z" fill="#bfe3cb" stroke="#3e6b4f" stroke-width="3"/>
+    <rect x="26" y="30" width="40" height="30" rx="9" fill="#eef7f0" stroke="#3e6b4f" stroke-width="3"/>
+    <circle cx="38" cy="45" r="3.4" fill="#3e6b4f"/>
+    <path d="M50 45 q3 -3 6 0" fill="none" stroke="#3e6b4f" stroke-width="3" stroke-linecap="round"/>
+    <path d="M40 52 q5 4 10 0" fill="none" stroke="#3e6b4f" stroke-width="3" stroke-linecap="round"/>
+  </g></defs></svg>
+
+<script>
+  const chat = document.getElementById('chat');
+  const form = document.getElementById('form');
+  const input = document.getElementById('input');
+  const runChk = document.getElementById('run');
+  const sendBtn = document.getElementById('send');
+
+  function el(tag, cls, html) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (html !== undefined) e.innerHTML = html;
+    return e;
+  }
+  function esc(s) {
+    return (s || '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+  }
+  function avatar() {
+    return '<svg class="av" viewBox="0 0 100 100"><use href="#robo-av"/></svg>';
+  }
+  function scroll() { chat.scrollTop = chat.scrollHeight; }
+
+  function addUser(text) {
+    const m = el('div', 'msg user');
+    m.appendChild(el('div', 'bubble', esc(text)));
+    chat.appendChild(m); scroll();
+  }
+  function addBotShell() {
+    const m = el('div', 'msg bot');
+    m.innerHTML = avatar() + '<div class="bubble"><span class="dots"><i></i><i></i><i></i></span></div>';
+    chat.appendChild(m); scroll();
+    return m.querySelector('.bubble');
+  }
+
+  // Strip a leading run of foreign-language preamble comments the model
+  // sometimes emits (e.g. "// C equivalent:") so the code card stays tidy.
+  function tidy(code) {
+    if (!code) return code;
+    const lines = code.split('\n');
+    let i = 0;
+    const pre = /^\s*\/\/.*(equivalent|#include|^\s*\/\/\s*(import|package|def |func |class )|<stdio|<stdlib)/i;
+    while (i < lines.length && (lines[i].trim() === '' || pre.test(lines[i]))) i++;
+    // only strip if we actually skipped a comment block and real code follows
+    return i > 0 && i < lines.length ? lines.slice(i).join('\n').trim() : code;
+  }
+
+  function renderBot(bubble, data) {
+    bubble.innerHTML = '';
+    const code = tidy(data.code);
+    if (code) {
+      bubble.appendChild(el('div', '', '<b>here you go!</b> 🌿'));
+      bubble.appendChild(el('pre', 'code', esc(code)));
+    } else {
+      bubble.appendChild(el('div', '', esc(data.response || '…')));
+    }
+    if (data.sandbox) {
+      const ok = data.sandbox.exit_code === 0;
+      const box = el('div', 'sandbox ' + (ok ? 'ok' : 'bad'));
+      box.innerHTML = '<span class="tag">' + (ok ? '✓ ran cleanly' : '✗ exit ' + data.sandbox.exit_code) + '</span>' + esc(data.sandbox.output || '(no output)');
+      bubble.appendChild(box);
+    }
+    scroll();
+  }
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const prompt = input.value.trim();
+    if (!prompt) return;
+    input.value = '';
+    sendBtn.disabled = true;
+    addUser(prompt);
+    const bubble = addBotShell();
+    try {
+      const res = await fetch('/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, execute: runChk.checked }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        bubble.innerHTML = '<span class="err">oops — ' + esc(data.error || ('HTTP ' + res.status)) + '</span>';
+      } else {
+        renderBot(bubble, data);
+      }
+    } catch (err) {
+      bubble.innerHTML = '<span class="err">couldn\'t reach hembot 😢 (' + esc(String(err)) + ')</span>';
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  });
+</script>
+</body>
+</html>

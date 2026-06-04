@@ -325,6 +325,16 @@ fn run_server(config) {
     let system_prompt = read_file(config.system_prompt_file);
     let srv = HttpServer(config.serve_host, config.serve_port);
 
+    // Cute web chat UI at GET / (served when the html file is present).
+    let ui_served = false;
+    if (config.ui_enabled && exists(config.ui_file)) {
+        let page = read_file(config.ui_file);
+        ui_served = true;
+        srv.route("GET", "/", fn(req) {
+            return { status: 200, content_type: "text/html; charset=utf-8", body: page };
+        });
+    }
+
     srv.route("GET", "/health", fn(req) {
         return json_response(200, json_stringify({ status: "ok", model: config.model }));
     });
@@ -355,11 +365,26 @@ fn run_server(config) {
         return json_response(200, chat_response_json(response, code, sandbox, json_stringify));
     });
 
-    print(`${BOLD}${CYAN}Hembot API${RESET} on ${DIM}http://${config.serve_host}:${config.serve_port}${RESET}`);
+    let base = `http://${config.serve_host}:${config.serve_port}`;
+    print(`${BOLD}${CYAN}Hembot${RESET} on ${DIM}${base}${RESET}`);
+    if (ui_served) {
+        print(`${GREEN}  🌿 web UI  ${base}/${RESET}`);
+    }
     print(`${DIM}  GET  /health${RESET}`);
     print(`${DIM}  POST /chat   {"prompt": "...", "execute": true}${RESET}`);
     print(`${DIM}Ctrl-C to stop.${RESET}`);
-    srv.serve(0);   // serve forever
+
+    // Resilient accept loop — a malformed/empty request (e.g. a browser
+    // preconnect socket that sends no bytes) must not kill the server, so we
+    // call handle_one() ourselves and swallow per-request errors rather than
+    // using the stdlib's serve(), which lets one bad request take it down.
+    loop {
+        try {
+            srv.handle_one();
+        } catch (e) {
+            // ignore this request and keep serving
+        }
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────────

@@ -21,6 +21,8 @@ describe("load_config defaults", fn() {
         expect(cfg.auto_retry).to_equal(false);
         expect(cfg.stream).to_equal(true);
         expect(cfg.spinner).to_equal(true);
+        expect(cfg.serve).to_equal(false);
+        expect(cfg.ui_enabled).to_equal(true);
     });
 
     test("temperature and timeout have sensible defaults", fn() {
@@ -65,6 +67,13 @@ describe("load_config overrides", fn() {
     test("--no-spinner disables generation feedback", fn() {
         let cfg = load_config(parse_fake_args(["--no-spinner"]));
         expect(cfg.spinner).to_equal(false);
+    });
+
+    test("--serve enables serve mode; --port/--no-ui apply", fn() {
+        let cfg = load_config(parse_fake_args(["--serve", "--port", "9000", "--no-ui"]));
+        expect(cfg.serve).to_equal(true);
+        expect(cfg.serve_port).to_equal(9000);
+        expect(cfg.ui_enabled).to_equal(false);
     });
 });
 

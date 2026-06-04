@@ -12,10 +12,11 @@ export let DEFAULT_TIMEOUT_MS = 120000;
 export let DEFAULT_MAX_RETRIES = 3;
 export let DEFAULT_SERVE_HOST = "127.0.0.1";
 export let DEFAULT_SERVE_PORT = 8080;
+export let DEFAULT_UI_FILE = "web/index.html";
 
 // String options that take a value: `--url http://...` instead of
 // being parsed as a flag plus a positional argument.
-export let CLI_STRING_OPTIONS = ["url", "model", "system", "host", "port"];
+export let CLI_STRING_OPTIONS = ["url", "model", "system", "host", "port", "ui"];
 
 export fn parse_cli(argv) {
     return cli.parse(argv, { strings: CLI_STRING_OPTIONS });
@@ -42,5 +43,8 @@ export fn load_config(parsed) {
         serve: cli.has_flag(parsed, "serve"),
         serve_host: cli.get_option(parsed, "host") ?? DEFAULT_SERVE_HOST,
         serve_port: i32(cli.get_option(parsed, "port") ?? `${DEFAULT_SERVE_PORT}`),
+        // Web UI served at GET / when this file exists; `--no-ui` disables it.
+        ui_file: cli.get_option(parsed, "ui") ?? DEFAULT_UI_FILE,
+        ui_enabled: !cli.has_flag(parsed, "no-ui"),
     };
 }
