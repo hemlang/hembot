@@ -486,6 +486,20 @@ fn discover_repo(dir) {
     return files;
 }
 
+// Append text to a file (for the trajectory recorder).
+fn append_file(path, text) {
+    let prior = exists(path) ? read_file(path) : "";
+    write_file(path, prior + text);
+}
+
+// Run the optional verify command in the project dir. Returns true/false, or
+// null when no command was given.
+fn run_verify(config, dir) {
+    if (config.verify_cmd == null) { return null; }
+    let r = run_capture_safe(["sh", "-c", `cd ${dir} && ${config.verify_cmd}`]);
+    return r.code == 0;
+}
+
 // Execute one tool call against the repo; return a result string for the model.
 // `seen` records files the model has @read (or @written) this task, so we can
 // refuse to overwrite an existing file blindly.
@@ -609,6 +623,25 @@ fn run_project_task(config, dir, task) {
     print(`${BOLD}${CYAN}changes:${RESET}`);
     print(ds == "" ? `${DIM}(no changes)${RESET}` : ds);
     print(`${DIM}review with: git -C ${dir} diff   ·   undo with: git -C ${dir} checkout . && git -C ${dir} clean -fd${RESET}`);
+
+    // Record the trajectory as training data: the full conversation (the
+    // assistant turns are the agent actions) plus an outcome verdict so we can
+    // keep only the trajectories that actually worked.
+    if (config.record_file != null) {
+        let verified = run_verify(config, dir);
+        let success = finished && (verified != false);
+        let record = {
+            task: task,
+            success: success,
+            reached_done: finished,
+            verified: verified,
+            steps: step,
+            changed: ds,
+            messages: messages,
+        };
+        append_file(config.record_file, json_stringify(record) + "\n");
+        print(`${DIM}recorded trajectory (success=${success}) → ${config.record_file}${RESET}`);
+    }
 }
 
 fn run_project_repl(config) {

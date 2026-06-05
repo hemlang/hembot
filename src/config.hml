@@ -17,7 +17,7 @@ export let DEFAULT_MAX_STEPS = 12;
 
 // String options that take a value: `--url http://...` instead of
 // being parsed as a flag plus a positional argument.
-export let CLI_STRING_OPTIONS = ["url", "model", "system", "host", "port", "ui", "project", "max-steps"];
+export let CLI_STRING_OPTIONS = ["url", "model", "system", "host", "port", "ui", "project", "max-steps", "record", "verify"];
 
 export fn parse_cli(argv) {
     return cli.parse(argv, { strings: CLI_STRING_OPTIONS });
@@ -54,5 +54,9 @@ export fn load_config(parsed) {
         // search/replace — slower / more tokens, but more accurate for weaker
         // models that can't reproduce exact SEARCH blocks.
         whole_file: cli.has_flag(parsed, "whole-file"),
+        // `--record <jsonl>` logs each task's trajectory (for training data).
+        // `--verify "<cmd>"` is run after a task to judge success.
+        record_file: cli.get_option(parsed, "record"),
+        verify_cmd: cli.get_option(parsed, "verify"),
     };
 }
