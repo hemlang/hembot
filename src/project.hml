@@ -1,0 +1,108 @@
+// Repo-map helpers for hembot's --project mode.
+//
+// A "repo map" is a compact, always-in-context summary of a whole repository:
+// each file's path, its exported symbols, and the modules it imports. It gives
+// the model whole-repo awareness (the API surface + dependency edges) without
+// spending tokens on file bodies. These helpers are pure — given file
+// {path, content} pairs they return strings — so they're unit-tested without
+// touching the filesystem.
+
+// Pull the quoted module path out of an `import`/`from "..."` line.
+fn quoted_path(line) {
+    let q1 = line.find("\"");
+    if (q1 < 0) { return null; }
+    let rest = line.slice(q1 + 1);
+    let q2 = rest.find("\"");
+    if (q2 < 0) { return null; }
+    return rest.slice(0, q2);
+}
+
+// Names declared inside `{ ... }`, honoring `A as B` (the exposed name is B).
+fn names_in_braces(line) {
+    let open = line.find("{");
+    let close = line.find("}");
+    if (open < 0 || close < 0 || close < open) { return []; }
+    let inner = line.slice(open + 1, close);
+    let out = [];
+    for (raw in inner.split(",")) {
+        let item = raw.trim();
+        if (item == "") { continue; }
+        let as_at = item.find(" as ");
+        if (as_at >= 0) { item = item.slice(as_at + 4).trim(); }
+        if (item != "") { out.push(item); }
+    }
+    return out;
+}
+
+// Word after a keyword prefix, up to the first '(', ':', '=', or space.
+fn name_after(line, prefix) {
+    let rest = line.slice(prefix.length).trim();
+    let stop = rest.length;
+    let marks = ["(", ":", "=", " ", "<"];
+    for (m in marks) {
+        let at = rest.find(m);
+        if (at >= 0 && at < stop) { stop = at; }
+    }
+    return rest.slice(0, stop).trim();
+}
+
+// Exported symbol names declared in `content`.
+export fn extract_exports(content) {
+    let out = [];
+    for (raw in content.split("\n")) {
+        let line = raw.trim();
+        if (!line.starts_with("export ")) { continue; }
+        let after = line.slice(7).trim();   // text after "export "
+        if (after.starts_with("{")) {
+            for (n in names_in_braces(line)) { out.push(n); }
+        } else if (after.starts_with("fn ")) {
+            out.push(name_after(after, "fn "));
+        } else if (after.starts_with("let ")) {
+            out.push(name_after(after, "let "));
+        } else if (after.starts_with("const ")) {
+            out.push(name_after(after, "const "));
+        } else if (after.starts_with("var ")) {
+            out.push(name_after(after, "var "));
+        } else if (after.starts_with("define ")) {
+            out.push(name_after(after, "define "));
+        } else if (after.starts_with("enum ")) {
+            out.push(name_after(after, "enum "));
+        } else if (after.starts_with("type ")) {
+            out.push(name_after(after, "type "));
+        }
+    }
+    return out;
+}
+
+// Module paths imported by `content` (both `import ... from "x"` and `import "x"`).
+export fn extract_imports(content) {
+    let out = [];
+    for (raw in content.split("\n")) {
+        let line = raw.trim();
+        if (!line.starts_with("import ") && !line.starts_with("export ")) { continue; }
+        if (!line.contains("from \"") && !line.starts_with("import \"")) { continue; }
+        let p = quoted_path(line);
+        if (p != null) { out.push(p); }
+    }
+    return out;
+}
+
+// One-line summary of a file for the repo map.
+export fn file_summary(path, content) {
+    let exports = extract_exports(content);
+    let imports = extract_imports(content);
+    let lines = content.split("\n").length;
+    let s = `${path} (${lines}L)`;
+    if (exports.length > 0) { s = s + `  exports: ${exports.join(", ")}`; }
+    if (imports.length > 0) { s = s + `  imports: ${imports.join(", ")}`; }
+    return s;
+}
+
+// Build the full repo map from a list of { path, content } objects.
+export fn build_map(files) {
+    let lines = ["# Repo map (path · exports · imports)"];
+    for (f in files) {
+        lines.push(file_summary(f.path, f.content));
+    }
+    return lines.join("\n");
+}

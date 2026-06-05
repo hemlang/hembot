@@ -5,7 +5,7 @@
 
 import { post_json_timeout, post_json_stream, HttpServer } from "@stdlib/http";
 import { parse as json_parse, stringify as json_stringify } from "@stdlib/json";
-import { read_file, write_file, exists } from "@stdlib/fs";
+import { read_file, write_file, exists, remove_file } from "@stdlib/fs";
 import { run_capture_safe } from "@stdlib/shell";
 import { time_ms } from "@stdlib/time";
 import { BOLD, DIM, CYAN, GREEN, RED, RESET } from "@stdlib/terminal";
@@ -15,6 +15,8 @@ import { load_config, parse_cli } from "./config.hml";
 import { pick_strategy, temperature_for, STRATEGY_FEEDBACK, STRATEGY_COLD } from "./strategy.hml";
 import { start as spinner_start, stop as spinner_stop, format_summary, format_elapsed } from "./spinner.hml";
 import { parse_chat_request, chat_response_json, error_json } from "./api.hml";
+import { build_map } from "./project.hml";
+import { parse_tools, apply_edits } from "./tools.hml";
 
 // ────────────────────────────────────────────────────────────────────────────
 // LLM call — streaming version. Prints each token as it arrives and returns
@@ -388,6 +390,251 @@ fn run_server(config) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Project mode — multi-file agent over a whole repo.
+//
+// The model drives the repo through the tool protocol in src/tools.hml. We
+// always show it a repo map (src/project.hml); file bodies arrive on demand via
+// @read. Edits land on the real git working tree, so every change is a
+// reviewable, revertible diff.
+
+let PROJECT_SYSTEM_PROMPT = `You are Hembot, a coding agent working inside a Hemlock repository. You complete the user's task by issuing tool commands, one step at a time, and reading the results before continuing.
+
+You are shown a repo map (each file's path, exports, and imports). File contents are NOT shown until you @read them.
+
+Respond ONLY with tool commands. Available tools:
+
+@read <path>        — show a file's contents
+@grep <pattern>     — search the repo
+@tree               — reprint the repo map
+@run <path>         — run a .hml file (e.g. a test) and see its output
+@delete <path>      — delete a file
+@done <summary>     — finish; the task is complete
+
+@write <path>       — create or overwrite a file with full contents:
+\`\`\`
+<full file content>
+\`\`\`
+
+@edit <path>        — change an existing file with one or more search/replace blocks:
+\`\`\`
+<<<<<<< SEARCH
+exact existing lines
+=======
+replacement lines
+>>>>>>> REPLACE
+\`\`\`
+
+Rules:
+- Prefer @edit over @write for existing files. SEARCH must match the file exactly.
+- @read the files you intend to edit before editing them.
+- After changing code, @run the relevant test to verify, then fix any failures.
+- When everything works, finish with @done. Keep going until the task is done.`;
+
+// Whole-file variant (--whole-file): edits are done by rewriting the entire
+// file, which avoids the exact-match failures that trip up weaker models on
+// search/replace. Costs more tokens but is far more reliable.
+let PROJECT_SYSTEM_PROMPT_WHOLE = `You are Hembot, a coding agent working inside a Hemlock repository. You complete the user's task by issuing tool commands, one step at a time, and reading the results before continuing.
+
+You are shown a repo map (each file's path, exports, and imports). File contents are NOT shown until you @read them.
+
+Respond ONLY with tool commands. Available tools:
+
+@read <path>        — show a file's contents
+@grep <pattern>     — search the repo
+@tree               — reprint the repo map
+@run <path>         — run a .hml file (e.g. a test) and see its output
+@delete <path>      — delete a file
+@done <summary>     — finish; the task is complete
+
+@write <path>       — create a file, OR replace an existing file's ENTIRE contents:
+\`\`\`
+<full file content>
+\`\`\`
+
+Rules:
+- To change an existing file: @read it first, then @write the FULL updated file with your change applied. Reproduce every other line unchanged.
+- Always @write the complete file — never a fragment or a diff.
+- After changing code, @run the relevant test to verify, then fix any failures.
+- When everything works, finish with @done. Keep going until the task is done.`;
+
+// Project-relative full path.
+fn proj_path(dir, rel) {
+    return `${dir}/${rel}`;
+}
+
+// mkdir -p the parent directory of a file path.
+fn ensure_parent(fp) {
+    let parts = fp.split("/");
+    parts.pop();
+    let parent = parts.join("/");
+    if (parent != "") {
+        run_capture_safe(["mkdir", "-p", parent]);
+    }
+}
+
+// Discover every .hml file in the repo (relative path + content).
+fn discover_repo(dir) {
+    let res = run_capture_safe(["find", dir, "-name", "*.hml", "-not", "-path", "*/.git/*", "-type", "f"]);
+    let files = [];
+    for (raw in (res.stdout ?? "").split("\n")) {
+        let p = raw.trim();
+        if (p == "") { continue; }
+        let rel = p;
+        if (rel.starts_with(dir + "/")) { rel = rel.slice(dir.length + 1); }
+        files.push({ path: rel, content: read_file(p) });
+    }
+    return files;
+}
+
+// Execute one tool call against the repo; return a result string for the model.
+// `seen` records files the model has @read (or @written) this task, so we can
+// refuse to overwrite an existing file blindly.
+fn exec_tool(config, dir, tool, repo_map, seen) {
+    let kind = tool.tool;
+
+    if (kind == "tree") { return repo_map; }
+
+    if (kind == "read") {
+        let fp = proj_path(dir, tool.path);
+        if (!exists(fp)) { return `(read ${tool.path}: not found)`; }
+        seen[tool.path] = true;
+        return `--- ${tool.path} ---\n${read_file(fp)}`;
+    }
+
+    if (kind == "grep") {
+        let res = run_capture_safe(["grep", "-rn", "--include=*.hml", tool.pattern, dir]);
+        let out = (res.stdout ?? "").trim();
+        if (out == "") { return `(grep "${tool.pattern}": no matches)`; }
+        if (out.length > 1500) { out = out.slice(0, 1500) + "\n…(truncated)"; }
+        return out;
+    }
+
+    if (kind == "write") {
+        let fp = proj_path(dir, tool.path);
+        // Guardrail: don't let the model clobber an existing file it hasn't
+        // read this task — a weak model may @write a truncated "full file".
+        if (exists(fp) && !seen.has(tool.path)) {
+            return `(write ${tool.path}: refused — @read it first, then @write the COMPLETE updated file)`;
+        }
+        ensure_parent(fp);
+        write_file(fp, tool.content);
+        seen[tool.path] = true;
+        return `(wrote ${tool.path}, ${tool.content.split("\n").length} lines)`;
+    }
+
+    if (kind == "edit") {
+        let fp = proj_path(dir, tool.path);
+        if (!exists(fp)) { return `(edit ${tool.path}: file not found — use @write to create it)`; }
+        let r = apply_edits(read_file(fp), tool.edits);
+        if (!r.ok) { return `(edit ${tool.path} FAILED: ${r.error}. @read the file and match the SEARCH block exactly.)`; }
+        write_file(fp, r.content);
+        return `(edited ${tool.path})`;
+    }
+
+    if (kind == "delete") {
+        let fp = proj_path(dir, tool.path);
+        if (exists(fp)) { remove_file(fp); return `(deleted ${tool.path})`; }
+        return `(delete ${tool.path}: not found)`;
+    }
+
+    if (kind == "run") {
+        let fp = proj_path(dir, tool.target);
+        let res = run_capture_safe(["timeout", "30", "hemlock", fp]);
+        let out = (res.stdout ?? "") + (res.stderr ?? "");
+        if (out.length > 1800) { out = out.slice(0, 1800) + "\n…(truncated)"; }
+        return `(run ${tool.target}, exit ${res.code})\n${out}`;
+    }
+
+    if (kind == "done") { return `(done) ${tool.summary}`; }
+    return `(unknown tool)`;
+}
+
+// Run one task to completion (or until max steps) on the repo.
+fn run_project_task(config, dir, task) {
+    let files = discover_repo(dir);
+    let repo_map = build_map(files);
+
+    let sys_prompt = config.whole_file ? PROJECT_SYSTEM_PROMPT_WHOLE : PROJECT_SYSTEM_PROMPT;
+    let messages = [
+        { role: "system", content: sys_prompt },
+        { role: "user", content: `${repo_map}\n\nTask: ${task}\n\nBegin.` },
+    ];
+
+    let seen = {};   // files @read or @written this task (for the overwrite guardrail)
+    let step = 0;
+    let finished = false;
+    while (step < config.max_steps && !finished) {
+        step = step + 1;
+        let resp = null;
+        try {
+            resp = generate_quiet(config, messages, config.temperature);
+        } catch (e) {
+            print_error(`${e}`);
+            return;
+        }
+
+        print(`${DIM}─── step ${step}/${config.max_steps} ───${RESET}`);
+        print(resp);
+
+        let tools = parse_tools(resp);
+        messages.push({ role: "assistant", content: resp });
+
+        if (tools.length == 0) {
+            messages.push({ role: "user", content: "No tool commands found. Respond only with @read/@grep/@write/@edit/@run/@delete/@done." });
+            continue;
+        }
+
+        let results = [];
+        for (tool in tools) {
+            let r = exec_tool(config, dir, tool, repo_map, seen);
+            let preview = r.length > 240 ? r.slice(0, 240) + "…" : r;
+            print(`${GREEN}↳${RESET} ${DIM}${preview}${RESET}`);
+            results.push(r);
+            if (tool.tool == "done") { finished = true; }
+            if (tool.tool == "write" || tool.tool == "delete") {
+                files = discover_repo(dir);
+                repo_map = build_map(files);
+            }
+        }
+        messages.push({ role: "user", content: results.join("\n\n") });
+    }
+
+    if (!finished) {
+        print(`${DIM}(stopped after ${config.max_steps} steps)${RESET}`);
+    }
+    // `git status -s` so the summary includes untracked (newly created) files,
+    // which `git diff` would miss.
+    let diff = run_capture_safe(["git", "-C", dir, "status", "-s"]);
+    let ds = (diff.stdout ?? "").trim();
+    print(`${BOLD}${CYAN}changes:${RESET}`);
+    print(ds == "" ? `${DIM}(no changes)${RESET}` : ds);
+    print(`${DIM}review with: git -C ${dir} diff   ·   undo with: git -C ${dir} checkout . && git -C ${dir} clean -fd${RESET}`);
+}
+
+fn run_project_repl(config) {
+    let dir = config.project_dir;
+    if (!exists(dir)) {
+        print_error(`No such directory: ${dir}`);
+        return;
+    }
+    print(`${BOLD}${CYAN}Hembot${RESET} ${DIM}project mode${RESET} — ${dir}`);
+    print(`${DIM}Type a task. Ctrl-D or 'exit' to quit. Changes land on the git working tree.${RESET}`);
+    print("");
+
+    loop {
+        write(`${BOLD}task>${RESET} `);
+        let input = read_line();
+        if (input == null) { print(""); break; }
+        let t = input.trim();
+        if (t == "") { continue; }
+        if (t == "exit" || t == "quit") { break; }
+        run_project_task(config, dir, t);
+        print("");
+    }
+    print(`${DIM}Goodbye.${RESET}`);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Main loop
 
 fn main() {
@@ -401,6 +648,11 @@ fn main() {
 
     if (config.serve) {
         run_server(config);
+        return;
+    }
+
+    if (config.project_dir != null) {
+        run_project_repl(config);
         return;
     }
 

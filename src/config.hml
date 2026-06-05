@@ -13,10 +13,11 @@ export let DEFAULT_MAX_RETRIES = 3;
 export let DEFAULT_SERVE_HOST = "127.0.0.1";
 export let DEFAULT_SERVE_PORT = 8080;
 export let DEFAULT_UI_FILE = "web/index.html";
+export let DEFAULT_MAX_STEPS = 12;
 
 // String options that take a value: `--url http://...` instead of
 // being parsed as a flag plus a positional argument.
-export let CLI_STRING_OPTIONS = ["url", "model", "system", "host", "port", "ui"];
+export let CLI_STRING_OPTIONS = ["url", "model", "system", "host", "port", "ui", "project", "max-steps"];
 
 export fn parse_cli(argv) {
     return cli.parse(argv, { strings: CLI_STRING_OPTIONS });
@@ -46,5 +47,12 @@ export fn load_config(parsed) {
         // Web UI served at GET / when this file exists; `--no-ui` disables it.
         ui_file: cli.get_option(parsed, "ui") ?? DEFAULT_UI_FILE,
         ui_enabled: !cli.has_flag(parsed, "no-ui"),
+        // `--project <dir>` runs the multi-file agent over a repo.
+        project_dir: cli.get_option(parsed, "project"),
+        max_steps: i32(cli.get_option(parsed, "max-steps") ?? `${DEFAULT_MAX_STEPS}`),
+        // `--whole-file`: edit by rewriting whole files (@write) instead of
+        // search/replace — slower / more tokens, but more accurate for weaker
+        // models that can't reproduce exact SEARCH blocks.
+        whole_file: cli.has_flag(parsed, "whole-file"),
     };
 }

@@ -1,0 +1,92 @@
+// Unit tests for src/tools.hml (tool-call protocol).
+import { describe, test, expect, run } from "@stdlib/testing";
+import { parse_tools, apply_edits, has_done } from "../src/tools.hml";
+
+describe("parse_tools — line commands", fn() {
+    test("read / run / delete / grep / done", fn() {
+        let resp = "let me look first.\n@read src/network/server.hml\n@grep WebSocket\n@run test/packet_test.hml\n@delete src/old.hml\n@done added a heartbeat";
+        let t = parse_tools(resp);
+        expect(t.length).to_equal(5);
+        expect(t[0].tool).to_equal("read");
+        expect(t[0].path).to_equal("src/network/server.hml");
+        expect(t[1].pattern).to_equal("WebSocket");
+        expect(t[2].target).to_equal("test/packet_test.hml");
+        expect(t[3].path).to_equal("src/old.hml");
+        expect(t[4].tool).to_equal("done");
+        expect(t[4].summary).to_equal("added a heartbeat");
+    });
+
+    test("ignores prose and unknown @commands", fn() {
+        let t = parse_tools("just some text\n@frobnicate nope\nmore text");
+        expect(t.length).to_equal(0);
+    });
+});
+
+describe("parse_tools — write", fn() {
+    test("captures full fenced content", fn() {
+        let resp = "@write src/util/log.hml\n```hml\nexport fn log(m) { print(m); }\n```\ndone soon";
+        let t = parse_tools(resp);
+        expect(t.length).to_equal(1);
+        expect(t[0].tool).to_equal("write");
+        expect(t[0].path).to_equal("src/util/log.hml");
+        expect(t[0].content).to_equal("export fn log(m) { print(m); }");
+    });
+});
+
+describe("parse_tools — edit", fn() {
+    test("parses search/replace sections", fn() {
+        let resp = "@edit src/a.hml\n```\n<<<<<<< SEARCH\nlet x = 1;\n=======\nlet x = 2;\n>>>>>>> REPLACE\n```";
+        let t = parse_tools(resp);
+        expect(t.length).to_equal(1);
+        expect(t[0].tool).to_equal("edit");
+        expect(t[0].edits.length).to_equal(1);
+        expect(t[0].edits[0].search).to_equal("let x = 1;");
+        expect(t[0].edits[0].replace).to_equal("let x = 2;");
+    });
+
+    test("multiple edits and a following command", fn() {
+        let resp = "@edit src/a.hml\n```\n<<<<<<< SEARCH\nA\n=======\nAA\n>>>>>>> REPLACE\n<<<<<<< SEARCH\nB\n=======\nBB\n>>>>>>> REPLACE\n```\n@run test/a.hml";
+        let t = parse_tools(resp);
+        expect(t.length).to_equal(2);
+        expect(t[0].edits.length).to_equal(2);
+        expect(t[1].tool).to_equal("run");
+    });
+});
+
+describe("apply_edits", fn() {
+    test("replaces the first occurrence", fn() {
+        let r = apply_edits("let x = 1;\nlet y = 1;", [{ search: "let x = 1;", replace: "let x = 42;" }]);
+        expect(r.ok).to_equal(true);
+        expect(r.content).to_equal("let x = 42;\nlet y = 1;");
+    });
+
+    test("errors when the search block is absent", fn() {
+        let r = apply_edits("let x = 1;", [{ search: "nonexistent", replace: "z" }]);
+        expect(r.ok).to_equal(false);
+        expect(r.content).to_equal("let x = 1;");   // unchanged
+    });
+
+    test("empty search appends", fn() {
+        let r = apply_edits("a", [{ search: "", replace: "\nb" }]);
+        expect(r.ok).to_equal(true);
+        expect(r.content).to_equal("a\nb");
+    });
+
+    test("applies edits in sequence", fn() {
+        let r = apply_edits("1 2 3", [
+            { search: "1", replace: "one" },
+            { search: "3", replace: "three" },
+        ]);
+        expect(r.content).to_equal("one 2 three");
+    });
+});
+
+describe("has_done", fn() {
+    test("detects the done tool", fn() {
+        expect(has_done(parse_tools("@read a\n@done ok"))).to_equal(true);
+        expect(has_done(parse_tools("@read a"))).to_equal(false);
+    });
+});
+
+let stats = run();
+if (!stats.success) { panic("tests failed"); }

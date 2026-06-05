@@ -1,0 +1,65 @@
+// Unit tests for src/project.hml (repo-map helpers).
+import { describe, test, expect, run } from "@stdlib/testing";
+import { extract_exports, extract_imports, file_summary, build_map } from "../src/project.hml";
+
+describe("extract_exports", fn() {
+    test("fn / let / define declarations", fn() {
+        let src = "export fn add(a, b) { return a + b; }\nexport let PI = 3.14;\ndefine Foo { x: i32 }\nexport define Bar { y: i32 }";
+        let ex = extract_exports(src);
+        expect(ex.contains("add")).to_equal(true);
+        expect(ex.contains("PI")).to_equal(true);
+        expect(ex.contains("Bar")).to_equal(true);
+        expect(ex.contains("Foo")).to_equal(false);  // not exported
+    });
+
+    test("re-export braces with aliases", fn() {
+        let src = "export { Packet } from \"./network/packet.hml\";\nexport { internal as Server } from \"./server.hml\";";
+        let ex = extract_exports(src);
+        expect(ex.contains("Packet")).to_equal(true);
+        expect(ex.contains("Server")).to_equal(true);   // the aliased (exposed) name
+        expect(ex.contains("internal")).to_equal(false);
+    });
+
+    test("no exports", fn() {
+        expect(extract_exports("let x = 1;\nfn helper() {}").length).to_equal(0);
+    });
+});
+
+describe("extract_imports", fn() {
+    test("named and bare imports", fn() {
+        let src = "import { Packet } from \"./packet.hml\";\nimport { sleep } from \"@stdlib/time\";\nimport \"libc.so.6\";";
+        let im = extract_imports(src);
+        expect(im.contains("./packet.hml")).to_equal(true);
+        expect(im.contains("@stdlib/time")).to_equal(true);
+        expect(im.contains("libc.so.6")).to_equal(true);
+    });
+
+    test("re-export from counts as an import edge", fn() {
+        let im = extract_imports("export { Server } from \"./network/server.hml\";");
+        expect(im.contains("./network/server.hml")).to_equal(true);
+    });
+});
+
+describe("file_summary / build_map", fn() {
+    test("summary includes path, exports, imports", fn() {
+        let s = file_summary("src/network/packet.hml",
+            "import { x } from \"../util/gm_convert.hml\";\nexport fn Packet() {}");
+        expect(s.contains("src/network/packet.hml")).to_equal(true);
+        expect(s.contains("exports: Packet")).to_equal(true);
+        expect(s.contains("imports: ../util/gm_convert.hml")).to_equal(true);
+    });
+
+    test("build_map lists every file under a header", fn() {
+        let files = [
+            { path: "src/index.hml", content: "export { Packet } from \"./network/packet.hml\";" },
+            { path: "src/network/packet.hml", content: "export fn Packet() {}" },
+        ];
+        let map = build_map(files);
+        expect(map.contains("# Repo map")).to_equal(true);
+        expect(map.contains("src/index.hml")).to_equal(true);
+        expect(map.contains("src/network/packet.hml")).to_equal(true);
+    });
+});
+
+let stats = run();
+if (!stats.success) { panic("tests failed"); }

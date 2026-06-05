@@ -116,6 +116,26 @@ curl -s -X POST http://127.0.0.1:8080/chat \
 - `code` is `null` when the response contains no fenced Hemlock.
 - Bad/empty `prompt` → `400`; an upstream model failure → `502`.
 
+## Project mode (multi-file)
+
+Point hembot at a whole repo and give it tasks that span files:
+
+```bash
+hemlock src/hembot.hml --project path/to/repo
+# task> add a heartbeat ping to the server
+```
+
+The agent sees a **repo map** (every file's path · exports · imports) and pulls
+file bodies in on demand. It drives the repo through a small tool protocol —
+`@read`, `@grep`, `@write`, `@edit` (search/replace), `@delete`, `@run`,
+`@done` — and edits land on the **git working tree**, so every change is a
+reviewable, revertible diff.
+
+Flags: `--whole-file` edits by rewriting entire files instead of search/replace
+(slower / more tokens, but more reliable for weaker models); `--max-steps <n>`
+bounds the agent loop (default 12). Overwriting an existing file requires the
+agent to `@read` it first.
+
 ## Slash commands
 
 At the `you>` prompt:

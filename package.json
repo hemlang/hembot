@@ -8,7 +8,7 @@
   "scripts": {
     "start": "hemlock src/hembot.hml",
     "build": "hemlockc src/hembot.hml -o hembot",
-    "test": "hemlock tests/test_extract.hml && hemlock tests/test_config.hml && hemlock tests/test_strategy.hml && hemlock tests/test_spinner.hml && hemlock tests/test_api.hml",
+    "test": "hemlock tests/test_extract.hml && hemlock tests/test_config.hml && hemlock tests/test_strategy.hml && hemlock tests/test_spinner.hml && hemlock tests/test_api.hml && hemlock tests/test_project.hml && hemlock tests/test_tools.hml",
     "clean": "rm -f hembot hembot-bin test_extract_bin test_config_bin"
   },
   "dependencies": {},

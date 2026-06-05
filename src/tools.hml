@@ -1,0 +1,129 @@
+// Tool-call protocol for hembot's --project mode.
+//
+// The agent model drives the repo through a small, regular protocol that's easy
+// to parse AND easy to generate SFT data for. Single-line commands start with
+// `@`; the two block commands (`@write`, `@edit`) are followed by a fenced code
+// block.
+//
+//   @read   <path>            — load a file into the working set
+//   @grep   <pattern>         — search the repo
+//   @run    <target>          — run a file / tests
+//   @delete <path>            — remove a file
+//   @tree                     — show the repo map
+//   @done   <summary>         — finish the task
+//
+//   @write <path>             @edit <path>
+//   ```                       ```
+//   <full file content>       <<<<<<< SEARCH
+//   ```                       <old lines>
+//                             =======
+//                             <new lines>
+//                             >>>>>>> REPLACE
+//                             ```
+//
+// All helpers here are pure (string in, structured data out) so they're
+// unit-tested without a model or a filesystem.
+
+// Collect the fenced block that follows index `start`. Returns
+// { body, next } where `next` is the index just past the closing fence.
+// If no opening fence is found, body is "" and next == start.
+fn collect_fence(lines, start) {
+    let n = lines.length;
+    let i = start;
+    while (i < n && lines[i].trim() == "") { i = i + 1; }   // skip blanks
+    if (i >= n || !lines[i].trim().starts_with("```")) {
+        return { body: "", next: start };
+    }
+    let body_lines = [];
+    i = i + 1;   // past the opening fence
+    while (i < n && lines[i].trim() != "```") {
+        body_lines.push(lines[i]);
+        i = i + 1;
+    }
+    return { body: body_lines.join("\n"), next: i + 1 };   // past the closing fence
+}
+
+// Parse one or more SEARCH/REPLACE sections out of an @edit block body.
+fn parse_search_replace(payload) {
+    let edits = [];
+    let lines = payload.split("\n");
+    let i = 0;
+    let n = lines.length;
+    while (i < n) {
+        if (lines[i].trim() == "<<<<<<< SEARCH") {
+            i = i + 1;
+            let search_lines = [];
+            while (i < n && lines[i].trim() != "=======") { search_lines.push(lines[i]); i = i + 1; }
+            i = i + 1;   // skip the divider
+            let replace_lines = [];
+            while (i < n && lines[i].trim() != ">>>>>>> REPLACE") { replace_lines.push(lines[i]); i = i + 1; }
+            i = i + 1;   // skip the closing marker
+            edits.push({ search: search_lines.join("\n"), replace: replace_lines.join("\n") });
+        } else {
+            i = i + 1;
+        }
+    }
+    return edits;
+}
+
+// Parse a model response into an ordered list of tool calls.
+export fn parse_tools(response) {
+    let lines = response.split("\n");
+    let tools = [];
+    let i = 0;
+    let n = lines.length;
+    while (i < n) {
+        let t = lines[i].trim();
+        if (!t.starts_with("@")) { i = i + 1; continue; }
+
+        let sp = t.find(" ");
+        let cmd = sp >= 0 ? t.slice(1, sp) : t.slice(1);
+        let arg = sp >= 0 ? t.slice(sp + 1).trim() : "";
+
+        if (cmd == "write" || cmd == "edit") {
+            let fb = collect_fence(lines, i + 1);
+            if (cmd == "write") {
+                tools.push({ tool: "write", path: arg, content: fb.body });
+            } else {
+                tools.push({ tool: "edit", path: arg, edits: parse_search_replace(fb.body) });
+            }
+            i = fb.next;
+            continue;
+        }
+
+        if (cmd == "read")        { tools.push({ tool: "read", path: arg }); }
+        else if (cmd == "grep")   { tools.push({ tool: "grep", pattern: arg }); }
+        else if (cmd == "run")    { tools.push({ tool: "run", target: arg }); }
+        else if (cmd == "delete") { tools.push({ tool: "delete", path: arg }); }
+        else if (cmd == "tree")   { tools.push({ tool: "tree" }); }
+        else if (cmd == "done")   { tools.push({ tool: "done", summary: arg }); }
+        // unknown @commands are ignored
+        i = i + 1;
+    }
+    return tools;
+}
+
+// Apply a list of { search, replace } edits to file content, in order.
+// An empty `search` appends `replace`. Returns { ok, content, error }.
+export fn apply_edits(content, edits) {
+    let cur = content;
+    for (e in edits) {
+        if (e.search == "") {
+            cur = cur + e.replace;
+        } else if (cur.find(e.search) >= 0) {
+            cur = cur.replace(e.search, e.replace);
+        } else {
+            return { ok: false, content: content,
+                     error: `SEARCH block not found: ${e.search.slice(0, 60)}` };
+        }
+    }
+    return { ok: true, content: cur, error: "" };
+}
+
+// True if the response asked to finish.
+export fn has_done(tools) {
+    for (t in tools) {
+        if (t.tool == "done") { return true; }
+    }
+    return false;
+}
