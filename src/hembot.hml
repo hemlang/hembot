@@ -10,7 +10,7 @@ import { run_capture_safe } from "@stdlib/shell";
 import { time_ms } from "@stdlib/time";
 import { BOLD, DIM, CYAN, GREEN, RED, RESET } from "@stdlib/terminal";
 
-import { extract_code, build_retry_feedback, parse_sse_events, parse_openai_delta, categorize_error } from "./extract.hml";
+import { extract_code, build_retry_feedback, build_retry_feedback_with_code, parse_sse_events, parse_openai_delta, categorize_error } from "./extract.hml";
 import { load_config, parse_cli } from "./config.hml";
 import { pick_strategy, temperature_for, STRATEGY_FEEDBACK, STRATEGY_COLD } from "./strategy.hml";
 import { start as spinner_start, stop as spinner_stop, format_summary, format_elapsed } from "./spinner.hml";
@@ -251,7 +251,17 @@ fn handle_slash(cmd, messages) {
 
 fn retry_loop(config, messages, last_result, original_user_prompt) {
     let system_prompt = messages[0];  // preserved across cold resamples
+    // `messages` ends with [..., current user prompt, failed assistant reply].
+    // Everything from the failed reply onward is this turn's retry trail; a
+    // successful cold resample replaces that trail — and nothing before it —
+    // so earlier turns of the conversation survive.
+    let trail_start = messages.length - 1;
     let error_type = categorize_error(last_result);
+    // Most recent failing code, and whether the model can see it in
+    // `messages` — cold attempts never enter the conversation, so a feedback
+    // turn that follows one must quote the code explicitly.
+    let last_code = "";
+    let code_in_history = true;
     let attempt = 0;
     while (attempt < config.max_retries && last_result.exit_code != 0) {
         attempt = attempt + 1;
@@ -262,7 +272,9 @@ fn retry_loop(config, messages, last_result, original_user_prompt) {
         if (strategy == STRATEGY_FEEDBACK) {
             // Append feedback to the accumulated conversation so the model
             // sees the previous code + the error.
-            let feedback = build_retry_feedback(last_result);
+            let feedback = code_in_history
+                ? build_retry_feedback(last_result)
+                : build_retry_feedback_with_code(last_result, last_code);
             messages.push({ role: "user", content: feedback });
             turn_messages = messages;
         } else {
@@ -294,16 +306,18 @@ fn retry_loop(config, messages, last_result, original_user_prompt) {
             return;
         }
         last_result = run_hemlock(code);
+        last_code = code;
+        code_in_history = (strategy == STRATEGY_FEEDBACK);
         // Recategorize error after each retry
         error_type = categorize_error(last_result);
         print_sandbox(last_result);
 
-        // If a cold resample succeeded, replace the failed feedback trail
+        // If a cold resample succeeded, replace this turn's failed trail
         // in the persistent conversation with just the winning reply so
         // future turns see a clean history.
         if (strategy == STRATEGY_COLD && last_result.exit_code == 0) {
-            // Drop any feedback-turn bookkeeping left over from attempt 1.
-            while (messages.length > 2) { messages.pop(); }
+            // Drop the failed reply + any feedback-turn bookkeeping.
+            while (messages.length > trail_start) { messages.pop(); }
             messages.push({ role: "assistant", content: response });
         }
     }

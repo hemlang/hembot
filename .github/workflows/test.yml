@@ -37,11 +37,11 @@ jobs:
           sudo make install
           hemlock --version
 
-      - name: Run extract tests
-        run: hemlock tests/test_extract.hml
+      - name: Run all test suites
+        run: make test
 
-      - name: Run config tests
-        run: hemlock tests/test_config.hml
+      - name: Compile check with hemlockc
+        run: make build
 
       - name: Smoke test — agent parses and starts
         run: |
