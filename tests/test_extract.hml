@@ -1,6 +1,6 @@
 // Unit tests for src/extract.hml
 import { describe, test, expect, run } from "@stdlib/testing";
-import { extract_code, build_retry_feedback, parse_sse_events, parse_openai_delta } from "../src/extract.hml";
+import { extract_code, build_retry_feedback, build_retry_feedback_with_code, parse_sse_events, parse_openai_delta } from "../src/extract.hml";
 import { parse as json_parse } from "@stdlib/json";
 
 describe("extract_code", fn() {
@@ -143,6 +143,25 @@ describe("build_retry_feedback", fn() {
     test("handles null output gracefully", fn() {
         let msg = build_retry_feedback({ exit_code: 2, output: null });
         expect(msg.contains("Exit code 2")).to_equal(true);
+    });
+
+    test("uses real newlines, not literal backslash-n", fn() {
+        let msg = build_retry_feedback({ exit_code: 1, output: "boom" });
+        expect(msg.contains("\n")).to_equal(true);
+        expect(msg.contains("\\n")).to_equal(false);
+    });
+});
+
+describe("build_retry_feedback_with_code", fn() {
+    test("quotes the failing code in a fenced block", fn() {
+        let msg = build_retry_feedback_with_code({ exit_code: 1, output: "boom" }, "print(x);");
+        expect(msg.contains("```hemlock\nprint(x);\n```")).to_equal(true);
+    });
+
+    test("still includes exit code and output", fn() {
+        let msg = build_retry_feedback_with_code({ exit_code: 3, output: "kapow" }, "let y = 1;");
+        expect(msg.contains("Exit code 3")).to_equal(true);
+        expect(msg.contains("kapow")).to_equal(true);
     });
 });
 

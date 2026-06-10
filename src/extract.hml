@@ -85,12 +85,12 @@ export fn categorize_error(result) {
     return "unknown";
 }
 
-// Build a short feedback message the agent can send back to the model
-// after running extracted code. `result` should have `exit_code` and `output`.
-export fn build_retry_feedback(result) {
+// Shared tail of a retry-feedback message: exit code, output, and a
+// category-specific hint.
+fn feedback_body(result) {
     let output = result.output ?? "";
     let error_type = categorize_error(result);
-    
+
     let hint = "";
     if (error_type == "syntax") {
         hint = "This is a syntax error. Check Hemlock syntax rules: semicolons are required, use template strings for interpolation, and remember that / always does floating-point division.";
@@ -99,10 +99,23 @@ export fn build_retry_feedback(result) {
     } else if (error_type == "logic") {
         hint = "The code runs but produces incorrect output. Review the logic and try again.";
     }
-    
-    let message = `That code failed when I ran it. Exit code ${result.exit_code}.\\n\\nOutput:\\n${output}\\n\\n${hint}\\n\\nPlease fix and try again.`;
-    
-    return message;
+
+    return `Exit code ${result.exit_code}.\n\nOutput:\n${output}\n\n${hint}\n\nPlease fix and try again.`;
+}
+
+// Build a short feedback message the agent can send back to the model
+// after running extracted code. `result` should have `exit_code` and `output`.
+// Assumes the failing code is already in the conversation (the model's own
+// previous reply).
+export fn build_retry_feedback(result) {
+    return `That code failed when I ran it. ` + feedback_body(result);
+}
+
+// Variant that quotes the failing code itself. Used when the failed attempt
+// was a cold resample: its code never entered the persistent conversation,
+// so a plain "that code failed" would refer to code the model has never seen.
+export fn build_retry_feedback_with_code(result, code) {
+    return `This code failed when I ran it:\n\n\`\`\`hemlock\n${code}\n\`\`\`\n\n` + feedback_body(result);
 }
 
 // Parse one pass of an OpenAI-style SSE chunk-buffer into its finished events,
